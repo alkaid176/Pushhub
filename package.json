@@ -1,11 +1,11 @@
 {
   "name": "pushhub",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "test": "pnpm --filter @pushhub/server test",
-    "deploy": "pnpm --filter @pushhub/server run deploy"
+    "test": "pnpm --filter @pushhub/server test && pnpm --filter @pushhub/web-sdk test",
+    "deploy": "pnpm --filter @pushhub/web-sdk run build && pnpm --filter @pushhub/server run deploy"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
