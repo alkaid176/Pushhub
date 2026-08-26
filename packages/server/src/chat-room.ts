@@ -23,6 +23,7 @@ import {
   PROTOCOL_VERSION,
   RATE_LIMIT_PER_MIN,
   RATE_WINDOW_MS,
+  RETENTION_KEEP,
   SYNC_LIMIT_DEFAULT,
   SYNC_LIMIT_MAX,
   WID_LENGTH,
@@ -46,6 +47,11 @@ const PONG_FRAME = '{"v":1,"type":"pong"}';
 // Worker→DO 可信内部头：限流分键（KEY-05）用的 Send Key 原值（与 index.ts 同名约定，
 // 经 X-PH-Verified 可信通道随内部请求到达，不外泄任何响应）。
 const SEND_KEY_HEADER = "X-PH-Send-Key";
+
+// D-08 清理节奏：alarm 每日一次（保留窗口 DELETE + 限流桶清扫），数值可调
+// （reversible——清理逻辑不随数值变化）。DELETE 也计 SQLite 行写额度，
+// 一天一次批量足够（Pitfall 5：清理过频额度翻倍消耗）。
+const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // ---- messages 表：Phase 1 冻结版 13 列 DDL（Pattern 4，不建二级索引）----
 // seq 频道内单调游标（显式赋值）；wid 对外 ID（m_ + 16 字符，D-05）；
@@ -290,6 +296,14 @@ export class ChatRoom extends DurableObject {
       ws.close(1011, "send failed");
     }
 
+    // D-08 首个 alarm 的设置点：publish 成功路径内 getAlarm() 判空后才 set
+    // （构造器绝不 setAlarm——DO 每次唤醒构造器先于 alarm 处理器执行，直接
+    // set 会覆盖未触发的 alarm，Pitfall 7）。后续节奏由 alarm 处理器尾部
+    // 无条件重设自愈维持。
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + RETENTION_INTERVAL_MS);
+    }
+
     return new Response(JSON.stringify({ id: wid, seq }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
@@ -449,5 +463,33 @@ export class ChatRoom extends DurableObject {
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
     ws.close(code, reason);
+  }
+
+  /**
+   * D-08 每日保留清理（alarm，Pitfall 5/7）：
+   *  - messages：DELETE WHERE seq <= MAX(seq) - RETENTION_KEEP——严格小于当前
+   *    max，永不删 max 行（显式 seq 赋值的单调不回退前提；表空时 MAX 为
+   *    NULL，条件恒假零删除）；
+   *  - rate_sends：清扫过期限流桶（window_start 早于 24 小时前）；
+   *  - catch 自捕获不重抛：alarm 自带重试仅 6 次即放弃——自 catch 才能保住
+   *    每日节奏（异常留给下一次 alarm 自然重试同一批数据）；
+   *  - finally 尾部无条件重设下一天（setAlarm 覆盖式，不叠加）——本方法
+   *    是唯一与 publish 判空并列的 setAlarm 调用点。
+   */
+  async alarm(): Promise<void> {
+    try {
+      this.ctx.storage.sql.exec(
+        "DELETE FROM messages WHERE seq <= (SELECT MAX(seq) - ?1 FROM messages)",
+        RETENTION_KEEP,
+      );
+      this.ctx.storage.sql.exec(
+        "DELETE FROM rate_sends WHERE window_start < ?1",
+        Date.now() - RETENTION_INTERVAL_MS,
+      );
+    } catch {
+      // 吞异常：清理失败不阻断重设节奏；数据幂等（下一天同条件重删）。
+    } finally {
+      await this.ctx.storage.setAlarm(Date.now() + RETENTION_INTERVAL_MS);
+    }
   }
 }
