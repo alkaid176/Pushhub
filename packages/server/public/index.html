@@ -3,10 +3,131 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PushHub</title>
+    <!-- CSP 纵深防御（T-02-09）：消毒层若失守，内联脚本仍被拦截——script-src 'self' 禁 inline。
+         viewer.js 独立成文件即为满足此约束（脚本全部经外链加载）。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src * data:; base-uri 'self'; form-action 'self'"
+    />
+    <title>PushHub 查看器</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 16px;
+        line-height: 1.5;
+      }
+      h1 { font-size: 1.4rem; margin: 0 0 4px; }
+      h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+      .page-desc { color: graytext; font-size: 0.85rem; margin: 0 0 16px; }
+      #connect-form {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 6px 8px;
+        align-items: center;
+        padding: 12px;
+        border: 1px solid canvastext;
+        border-radius: 8px;
+      }
+      #connect-form label { font-size: 0.85rem; white-space: nowrap; }
+      #connect-form input {
+        font: inherit;
+        padding: 6px 8px;
+        border: 1px solid canvastext;
+        border-radius: 4px;
+        min-width: 0;
+      }
+      #connect-form button {
+        font: inherit;
+        padding: 6px 18px;
+        cursor: pointer;
+      }
+      .statusline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 12px 0;
+        font-size: 0.9rem;
+      }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .dot-idle { background: #9a9a9a; }
+      .dot-connecting { background: #d9a300; }
+      .dot-online { background: #2e9e5b; }
+      .dot-reconnecting { background: #e67200; }
+      .dot-offline { background: #c0392b; }
+      .error-bar {
+        margin: 8px 0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: #c0392b;
+        color: #fff;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+      .messages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .messages .msg {
+        border: 1px solid canvastext;
+        border-radius: 8px;
+        padding: 8px 12px;
+      }
+      .messages .msg.clickable { cursor: pointer; }
+      .msg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+      .msg-head time { color: graytext; font-size: 0.75rem; font-family: ui-monospace, monospace; }
+      .msg-body { overflow-wrap: anywhere; }
+      .msg-body pre { overflow-x: auto; padding: 8px; border-radius: 4px; background: canvasinfoBg; }
+      .separator {
+        text-align: center;
+        color: graytext;
+        font-size: 0.8rem;
+        padding: 4px 0;
+        list-style: none;
+      }
+      .attack-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+      .attack-buttons button { font: inherit; font-size: 0.85rem; padding: 4px 12px; cursor: pointer; }
+      .attack-out { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+      .attack-sample { border: 1px dashed canvastext; border-radius: 6px; padding: 6px 10px; font-size: 0.85rem; }
+    </style>
   </head>
   <body>
-    <h1>PushHub</h1>
-    <p>Webhook 实时通知系统——管理页与 pushhub.js SDK 将在后续阶段挂载到此静态资产目录。</p>
+    <header>
+      <h1>PushHub 查看器</h1>
+      <p class="page-desc">
+        Demo 查看器（D-22/D-23）：本页自身即"两行接入"示例——
+        &lt;script src="/pushhub.js"&gt; + new PushHub(serverUrl, channelKey)，实时收消息并渲染。
+        只收不发：发消息用 curl / smoke.mjs，回复是 Phase 4 的域。
+        Channel Key 会保存在本机浏览器 localStorage（键 pushhub.key / pushhub.server），下次打开免填；
+        如需清除，请删除本站点在浏览器中的本地数据（取舍自担，D-24）。
+      </p>
+    </header>
+
+    <form id="connect-form">
+      <label for="server-url">服务端地址</label>
+      <input id="server-url" name="server" type="text" autocomplete="off" spellcheck="false" placeholder="https://pushhub.example.com" />
+      <button type="submit">连接</button>
+      <label for="channel-key">Channel Key</label>
+      <input id="channel-key" name="key" type="password" autocomplete="off" spellcheck="false" placeholder="phc_…" />
+    </form>
+
+    <div class="statusline">
+      <span id="status-dot" class="dot dot-idle"></span>
+      <span id="status-text">未连接</span>
+    </div>
+
+    <div id="error-bar" class="error-bar" hidden></div>
+
+    <ul id="messages" class="messages"></ul>
+
+    <section class="attack">
+      <h2>攻击样本（消毒验证——本地经 renderMarkdown 渲染，不经服务端发送）</h2>
+      <div id="attack-buttons" class="attack-buttons"></div>
+      <div id="attack-out" class="attack-out"></div>
+    </section>
+
+    <!-- ?v= 缓存规避：值 = 当前部署版本号。升级 SDK（重建 pushhub.js）时同步改此值（README 有约定）。 -->
+    <script src="/pushhub.js?v=0.1.7"></script>
+    <script src="/viewer.js"></script>
   </body>
 </html>
