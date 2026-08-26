@@ -73,7 +73,7 @@ Plans:
   3. 含 `<script>`、`<img onerror>` 等攻击样本的消息经 SDK 渲染辅助输出安全 HTML（marked + DOMPurify 消毒），攻击样本 fixture 回归通过；宿主页面也可选择只接收原始数据自行渲染
   4. pushhub.js 由 Worker 静态资产从服务端域名直接分发，浏览器引入即可用，不产生 Worker 请求计费
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 Plans:
 **Wave 1**
 
@@ -85,7 +85,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-03-PLAN.md — Demo 查看器（D-22/D-23/D-24）+ SDK API 文档（README）+ 生产四标准终验（SC4 资产命中零计费 + SC2 部署混沌 0.1.7/0.1.8）
+- [x] 02-03-PLAN.md — Demo 查看器（D-22/D-23/D-24）+ SDK API 文档（README）+ 生产四标准终验（SC4 资产命中零计费 + SC2 部署混沌 0.1.7/0.1.8）
 
 **Research note**: 建议带研究复查（测试栈主题同 Phase 1）；iOS Safari 后台冻结的 visibilitychange 恢复路径需真机验证
 **UI hint**: yes
@@ -165,7 +165,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
-| 2. Web SDK 参考客户端 | 2/3 | In Progress|  |
+| 2. Web SDK 参考客户端 | 3/3 | In Progress|  |
 | 3. 管理页与密钥生命周期 | 0/TBD | Not started | - |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |
 | 5. Windows 桌面客户端（Tauri 2） | 0/TBD | Not started | - |

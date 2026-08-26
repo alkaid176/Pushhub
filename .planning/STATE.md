@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 current_phase: 2
 current_phase_name: Web SDK 参考客户端
-status: executing
-stopped_at: Completed 02-02-PLAN.md (reconnect resilience)
-last_updated: "2026-08-26T16:29:55.815Z"
+status: verifying
+stopped_at: Completed 02-03-PLAN.md (viewer + README + 生产四标准终验)
+last_updated: "2026-08-26T17:07:05.001Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 2 execution started
-state_head: b995bb5452dc7fbb56dcb54d7678c24fc0d11765
+state_head: f195565f870c3c8f510fa6df55083b79f716ba35
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 8
-  completed_plans: 7
+  completed_plans: 8
   percent: 17
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 
 Phase: 2 (Web SDK 参考客户端) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-26 — Phase 2 execution started
 
 Progress: [██░░░░░░░░] 17%
@@ -65,6 +65,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 01 P05 | 13min | 2 tasks | 10 files |
 | Phase 02 P01 | 55min | 4 tasks | 19 files |
 | Phase 02 P02 | 64min | 3 tasks | 15 files |
+| Phase 02 P03 | 32min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -97,6 +98,10 @@ Recent decisions affecting current work:
 - [Phase 2]: [Phase 02] 02-02 连接生命周期固化为纯状态机 connection-machine（createMachine 输入事件流→输出动作流，零平台依赖）+ pushhub 薄 adapter——Phase 5 Tauri 移植同构参考；full jitter cap 60s / 心跳 30s / pong 死线 10s / 探活死线 5s / SYNC_PAGE_MAX=100 全部常量固化
 - [Phase 2]: [Phase 02] 02-02 E2E 断连手段定稿（spike 消费）：页面包装 WebSocket 构造器捕获底层 socket + close(1000, reason)——实证无参 close() 在 wrangler dev 代理层下握手卡 CLOSING（onclose 永不触发）；退避窗口确定性经页面 Math.random=0.99 注入（机器缺省随机源属性查找）
 - [Phase 2]: [Phase 02] 02-02 部署 0.1.6（Version 936e5e7f）：SMOKE OK 368ms + /pushhub.js 81,022 字节逐字节一致；WINDOWS.md #4 浏览器层重连验证欠账关闭（三断连形态 E2E 全绿）
+- [Phase 2]: [Phase 02] 02-03 oldest_kept_seq 分隔线下界 >1（非 >0）：MIN(seq)=1 等价从未清理，避免全新频道误报——D-10 诚实缺口语义
+- [Phase 2]: [Phase 02] 02-03 SC4 tail 被 DNS 污染阻断：server 加 x-ph-worker 响应标记头作等价程序化证据（资产无头/Worker 有头），dashboard 人工核对保留 end-of-phase 批量
+- [Phase 2]: [Phase 02] 02-03 生产部署混沌 CHAOS PASS：0.1.7→0.1.8 断连后 10.7s 自动恢复恰补 2 条零重复（chaos-sc2.mjs 一次性 harness）
+- [Phase 2]: [Phase 02] 02-03 ?v= 缓存参数语义 = 产物内容最近变更时的部署版本号（README 契约化）
 
 ### Pending Todos
 
@@ -118,6 +123,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-26T16:29:55.685Z
-Stopped at: Completed 02-02-PLAN.md (reconnect resilience)
+Last session: 2026-08-26T17:07:04.875Z
+Stopped at: Completed 02-03-PLAN.md (viewer + README + 生产四标准终验)
 Resume file: None

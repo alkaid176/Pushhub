@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 0
+open_count: 1
 waived_count: 0
 fixed_count: 4
-total_count: 4
-last_updated: 2026-08-26T16:24:46.710Z
+total_count: 5
+last_updated: 2026-08-26T17:06:39.477Z
 ---
 
 # Broken Windows Ledger
@@ -19,6 +19,7 @@ last_updated: 2026-08-26T16:24:46.710Z
 | 2 | 01 | unrun-verify | scripts/smoke.mjs |  | v0.1.3 production smoke unrun: workers.dev SNI-blocked ~75min (deploy e20626bf succeeded; rerun PH_SMOKE_URL=https://pushhub.snake160220.workers.dev node scripts/smoke.mjs when network recovers) | fixed |  | 2026-08-26T09:12:44.865Z | 2026-08-26T12:28:16.657Z |
 | 3 | 01 | unrun-verify | scripts/smoke.mjs |  | v0.1.4 production smoke unrun (2nd window): DNS pollution resolves workers.dev to Facebook/Twitter IPs; smoke.mjs final version validated locally on real workerd (SMOKE OK, 11ms latency, catch-up exactly 2); rerun PH_SMOKE_URL=https://pushhub.snake160220.workers.dev PH_ADMIN_KEY=<secret> node scripts/smoke.mjs when network recovers — passing also closes entry 2 (v0.1.3, same worker superset) | fixed |  | 2026-08-26T11:28:34.271Z | 2026-08-26T12:28:17.095Z |
 | 4 | 2 | unrun-verify | packages/web-sdk/e2e/tracer.spec.ts |  | 浏览器层 SDK 意外断连→自动重连未在 E2E 观察（A1 spike：setOffline 不关 WS；重连逻辑已有单测+服务端冒烟覆盖，02-02 需调试句柄/CDP 替代手段补浏览器层验证） | fixed |  | 2026-08-26T15:19:01.056Z | 2026-08-26T16:24:46.710Z |
+| 5 | 2 | unrun-verify | Cloudflare dashboard |  | D-15④ dashboard Duration 空闲平直 + 部署尖峰回落 + /pushhub.js 不进 Workers 请求曲线（SC4 dashboard 终验；标记头对照已给程序化等价证据，02-03-SUMMARY Human-Check Items） | open |  | 2026-08-26T17:06:39.477Z |  |
 
 ````json
 [
@@ -69,6 +70,18 @@ last_updated: 2026-08-26T16:24:46.710Z
     "reason": "",
     "recorded_at": "2026-08-26T15:19:01.056Z",
     "resolved_at": "2026-08-26T16:24:46.710Z"
+  },
+  {
+    "id": 5,
+    "kind": "unrun-verify",
+    "phase": "2",
+    "file": "Cloudflare dashboard",
+    "line": null,
+    "description": "D-15④ dashboard Duration 空闲平直 + 部署尖峰回落 + /pushhub.js 不进 Workers 请求曲线（SC4 dashboard 终验；标记头对照已给程序化等价证据，02-03-SUMMARY Human-Check Items）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-26T17:06:39.477Z",
+    "resolved_at": null
   }
 ]
 ````
