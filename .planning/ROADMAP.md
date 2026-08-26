@@ -32,7 +32,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. 频道空闲（有挂起的 WS 连接但无消息流量）时，Cloudflare dashboard 的 DO duration 不增长——休眠 API 生效，免费额度不被空闲连接烧掉
   4. 无效或缺失密钥的 /send 请求与 WS 连接被拒绝；单个 Send Key 超过每分钟 30 条限流时收到 429
   5. shared/ 协议包（TS 类型 + golden JSON fixtures，含版本字段）就位，服务端测试对正反例 fixture 全部通过——这是三端移植的契约基线
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+- [ ] 01-01-PLAN.md — Walking Skeleton：全栈 tracer 切片（scaffold + /api/send + ChatRoom DO + WS 扇出 + E2E 测试 + 生产部署冒烟）
+- [ ] 01-02-PLAN.md — 协议冻结：shared 完整类型 + validators + golden fixtures 正反例 + 逐字节契约测试
+- [ ] 01-03-PLAN.md — 发送侧完整化：校验链（413/400/401 矩阵）+ SRV-02 字段透传 + KEY-05 限流
+- [ ] 01-04-PLAN.md — 接收侧完整化：sync 补拉（首拉 50/翻页/oldest_kept_seq）+ 保留清理 alarm + 群聊/seq/休眠测试
+- [ ] 01-05-PLAN.md — 三级密钥闭合：密钥写路径 + Admin API 最小集 + D-15 完整冒烟固化
 **Research note**: 建议带研究复查（wrangler types 与 vitest-pool-workers 兼容性 known-issues）；DO 类名（ChatRoom）首版即定终身命名，不可随意改名
 
 ### Phase 2: Web SDK 参考客户端
