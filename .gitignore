@@ -11,5 +11,8 @@ node_modules/
 # build output
 dist/
 
+# web-sdk 构建产物挂载点（packages/web-sdk/dist/ 已由上方 dist/ 覆盖）
+packages/server/public/pushhub.js
+
 # vitest temporary
 .vitest/

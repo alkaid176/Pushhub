@@ -1,0 +1,23 @@
+{
+  "name": "@pushhub/web-sdk",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "build": "node build.mjs",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@pushhub/shared": "workspace:*",
+    "dompurify": "3.4.14",
+    "marked": "18.0.11"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "esbuild": "0.28.2",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

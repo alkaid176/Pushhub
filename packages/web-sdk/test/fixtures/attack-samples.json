@@ -1,0 +1,42 @@
+[
+  {
+    "name": "script-tag",
+    "input": "<script>alert(1)</script>after",
+    "expected": "after"
+  },
+  {
+    "name": "img-onerror",
+    "input": "<img src=x onerror=alert(1)>",
+    "expected": "<img src=\"x\">"
+  },
+  {
+    "name": "javascript-href",
+    "input": "[click](javascript:alert(1))",
+    "expected": "<p><a target=\"_blank\" rel=\"noopener noreferrer\">click</a></p>\n"
+  },
+  {
+    "name": "data-href",
+    "input": "[click](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)",
+    "expected": "<p><a target=\"_blank\" rel=\"noopener noreferrer\">click</a></p>\n"
+  },
+  {
+    "name": "anchor-with-onclick",
+    "input": "<a href=\"https://ok.example\" onclick=\"alert(1)\">safe</a>",
+    "expected": "<p><a href=\"https://ok.example\" target=\"_blank\" rel=\"noopener noreferrer\">safe</a></p>\n"
+  },
+  {
+    "name": "svg-onload",
+    "input": "<svg onload=alert(1)></svg>",
+    "expected": "<p><svg></svg></p>\n"
+  },
+  {
+    "name": "iframe",
+    "input": "<iframe src=\"https://evil.example\"></iframe>",
+    "expected": ""
+  },
+  {
+    "name": "normal-md",
+    "input": "normal **md** [link](https://example.com)",
+    "expected": "<p>normal <strong>md</strong> <a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">link</a></p>\n"
+  }
+]
