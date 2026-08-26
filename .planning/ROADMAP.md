@@ -73,7 +73,20 @@ Plans:
   3. 含 `<script>`、`<img onerror>` 等攻击样本的消息经 SDK 渲染辅助输出安全 HTML（marked + DOMPurify 消毒），攻击样本 fixture 回归通过；宿主页面也可选择只接收原始数据自行渲染
   4. pushhub.js 由 Worker 静态资产从服务端域名直接分发，浏览器引入即可用，不产生 Worker 请求计费
 
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Tracer：pushhub.js 端到端最小切片（包 scaffold + SDK 核心 + 渲染消毒 + IIFE 构建 + 静态分发 + 真浏览器 E2E + 部署 0.1.5）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-02-PLAN.md — 重连韧性与协议纵深：纯状态机抽取 + full jitter 退避 + 心跳死线 + visibilitychange 探活（D-27）+ D-16×D-17 交集语义 + 断连混沌 E2E + 部署 0.1.6
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-03-PLAN.md — Demo 查看器（D-22/D-23/D-24）+ SDK API 文档（README）+ 生产四标准终验（SC4 资产命中零计费 + SC2 部署混沌 0.1.7/0.1.8）
+
 **Research note**: 建议带研究复查（测试栈主题同 Phase 1）；iOS Safari 后台冻结的 visibilitychange 恢复路径需真机验证
 **UI hint**: yes
 
