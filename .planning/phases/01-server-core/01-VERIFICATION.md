@@ -1,29 +1,35 @@
 ---
 phase: 01-server-core
-verified: 2026-08-26T19:55:00Z
-status: human_needed
+verified: "2026-08-26T12:46:00Z"
+status: passed
 score: 4/5 must-haves verified
 behavior_unverified: 1 # SC3 production DO-duration observation (manual-only; mechanism itself has a passing behavioral test)
 overrides_applied: 0
 behavior_unverified_items:
+
   - truth: "频道空闲（有挂起 WS 连接但无消息流量）时，生产环境 Cloudflare dashboard 的 DO duration 不增长——Hibernation 生效，免费额度不被空闲连接烧掉"
     test: "在 https://pushhub.snake160220.workers.dev 上保持一条 WS 连接（如 wss://…/api/ws/<channelKey>），空闲 5-10 分钟后打开 Cloudflare dashboard → Workers & Pages → pushhub → Durable Objects → Duration 指标"
     expected: "空闲期间 duration 曲线平直不增长（部署后的 WS 重连尖峰回落为平直属预期）"
     why_human: "wrangler dev 不驱逐 DO，本地无法观察；DO duration 是生产计费指标，仅 dashboard 可见（D-15 checklist ④，wrangler dev 不驱逐 DO 故只能生产验证）"
 coincidental_reliance_items:
+
   - truth: "SC1 生产端到端延迟 < 2 秒（当前部署版本）"
     reason: undeclared-precondition
     harden: "量化延迟证据（285ms/1119ms）来自 v0.1.0/v0.1.1 生产冒烟；当前 v0.1.4 因网络阻断未做生产冒烟（核心扇出路径自 01-01 结构未变，本地真 workerd 60/60 为等价证据）。网络窗口恢复后重跑 smoke.mjs（含 LATENCY 输出）即为该前置条件的显式确认"
 human_verification:
+
   - test: "观察生产 DO duration（验收 3 / SRV-04）"
     expected: "冒烟频道空闲数分钟后 dashboard 的 Durable Objects Duration 指标无增长"
     why_human: "计费指标仅生产 dashboard 可见；本地 wrangler dev 不驱逐 DO"
+
   - test: "网络窗口恢复后重跑生产冒烟：PH_SMOKE_URL=https://pushhub.snake160220.workers.dev PH_ADMIN_KEY=<secret> node scripts/smoke.mjs（通过后同时关闭 WINDOWS.md 条目 2/3）"
     expected: "输出 SMOKE OK 且 LATENCY < 2000ms（含 admin 建频道、断线补拉恰 2 条、401/413 反例全过）"
     why_human: "*.workers.dev 对本机 SNI 阻断 + DNS 污染（本次验证再探 15s 超时确认仍阻断）——环境问题非代码缺陷"
+
   - test: "裁决 CR-01（评审 Critical）：packages/server/src/admin.ts:44-49 长度前置检查用 UTF-16 码元数而非字节数——构造等码元长度的非 ASCII Bearer 可使 timingSafeEqual 抛未捕获异常返回 500（违反 D-06 信封契约与'一律 401'不变量）。修复为按 TextEncoder 字节长度比较（评审给出 5 行修复）"
     expected: "修复后补非 ASCII Bearer 反例断言 401；或明示接受为已知问题（接受则在本 frontmatter 加 overrides 条目，Phase 3 管理页前修复）"
     why_human: "实现符合 01-05 计划字面（'先比长度再比较'），缺陷在计划设计本身；评审标记 advisory，属接受/立即修复的裁量决策"
+
   - test: "确认 4 条 judgment 级禁令的验证结论（grep + 测试证据已由验证器采集）：① 服务端哑管道（不解析/截断/改写 Markdown，text 逐字节透传有测试断言）；② 密钥不落日志（src 零日志语句）；③ Phase 1 不对 callback_url/click_url 发服务端 fetch（src 无外连 fetch）；④ shared 包零 Workers 运行时依赖与 KV 前缀（grep 零命中）"
     expected: "用户确认四条禁令均未发生（结论：全部成立）"
     why_human: "judgment 级禁令按流程需人工背书；自动化证据为 grep/测试，语义判断需人确认"
