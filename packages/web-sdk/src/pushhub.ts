@@ -77,17 +77,30 @@ export class PushHub {
   private readonly machine = createMachine();
   private ws: WebSocket | null = null;
   private readonly timers = new Map<TimerKind, ReturnType<typeof setTimeout>>();
+  private visibilityHandler: (() => void) | null = null;
 
   /**
    * 构造即连（D-18，SC1 两行接入体验）。
    * WS URL：http→ws 前缀替换 + 去尾部斜杠 + encodeURIComponent 密钥
    * （Pitfall 7：服务端逐段 decodeURIComponent，键含保留字符必须先编码）。
+   * 同时注册 visibilitychange（D-27 探活：页面回前台立即 ping + 5s 死线）；
+   * destroy() 时移除（D-18 资源释放完备）。document 不存在的环境（SSR 导入
+   * 等）跳过注册——SDK 目标环境是浏览器。
    */
   constructor(serverUrl: string, channelKey: string) {
     this.wsUrl =
       serverUrl.replace(/^http/, "ws").replace(/\/+$/, "") +
       "/api/ws/" +
       encodeURIComponent(channelKey);
+    if (typeof document !== "undefined") {
+      this.visibilityHandler = () => {
+        this.dispatch({
+          kind: "VISIBILITY",
+          visible: document.visibilityState === "visible",
+        });
+      };
+      document.addEventListener("visibilitychange", this.visibilityHandler);
+    }
     this.dispatch({ kind: "CONNECT" });
   }
 
@@ -116,6 +129,10 @@ export class PushHub {
   /** disconnect + 移除全部监听 + 释放资源（SPA 卸载内存安全，D-18）。 */
   destroy(): void {
     this.dispatch({ kind: "DESTROY" });
+    if (this.visibilityHandler !== null && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
     this.listeners.message.clear();
     this.listeners.history.clear();
     this.listeners.status.clear();

@@ -23,9 +23,10 @@
  *  - v!==1 fatal 帧 → emitError(fatal) + closeSocket + offline，此后零动作
  *    不再重连（D-07 客户端严格；服务端宽容忽略坏帧——方向相反）；
  *  - 心跳：WS_OPEN arm(heartbeat, 30s)；TIMER(heartbeat) → sendPing +
- *    arm(pongDeadline, 10s) + re-arm(heartbeat)（pong 死线超时路径在
- *    machine-heartbeat 测试锁定）；FRAME(pong) → cancel(pongDeadline)；
- *  - VISIBILITY 探活（D-27）接线点保留，语义随 02-02 Task 2 落地。
+ *    arm(pongDeadline, 10s) + re-arm(heartbeat)；FRAME(pong) → cancel 两类死线；
+ *    pong/探活死线超时 → closeSocket(deadline) + 退避重连（T-02-08 假活防线）；
+ *  - VISIBILITY 探活（D-27）：visible → sendPing + arm(probe, 5s) + 心跳
+ *    周期接管恢复；hidden → 取消心跳与探活（页面冻结省额度，恢复时探活接管）。
  *
  * import 说明（prohibition 核对）：仅引用 @pushhub/shared（冻结协议包，
  * 纯常量/类型）与本包 ./frames（类型）、./dedup（纯逻辑）——零平台 API。
@@ -57,6 +58,9 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /** pong 死线：ping 后 10s 无 pong 判连接假死，强制重连。 */
 export const PONG_DEADLINE_MS = 10_000;
+
+/** 探活死线（D-27）：页面回前台 ping 后 5s 无 pong 判死线，强制重连续补拉。 */
+export const PROBE_DEADLINE_MS = 5_000;
 
 /** has_more 连续翻页硬上限（T-02-06：服务端异常循环 has_more 时不无限翻页）。 */
 export const SYNC_PAGE_MAX = 100;
@@ -202,8 +206,10 @@ export function createMachine(options: MachineOptions = {}): ConnectionMachine {
         }
         return;
       case "pong":
-        // auto-response 回帧：死线解除（pongDeadline 复位将在下个 ping 重新武装）。
+        // auto-response 回帧：两类死线一并解除（周期心跳 pongDeadline 与
+        // D-27 探活 probe——pong 即"连接活着"的唯一证据）。
         cancelTimer("pongDeadline", out);
+        cancelTimer("probe", out);
         return;
       case "error":
         // 服务端 WS 错误帧（invalid_frame 等）——非致命透传，连接保持。
@@ -319,14 +325,29 @@ export function createMachine(options: MachineOptions = {}): ConnectionMachine {
             return out;
           case "pongDeadline":
           case "probe":
-            // 死线超时路径（pong 死线 / D-27 探活死线）：02-02 Task 2 落地。
+            // 死线超时（周期心跳 pong 死线 / D-27 探活死线）：连接判假死，
+            // 立即强制重连（不等 WS_CLOSE）——恢复后按重连确定序列补拉。
+            if (state === "online") {
+              forceReconnect(out);
+            }
             return out;
         }
         return out;
       }
       case "VISIBILITY": {
-        // D-27 探活（visible → ping + 5s probe；hidden → 取消心跳周期）：
-        // 02-02 Task 2 落地——本任务先保留接线点（事件被接受、零动作）。
+        // D-27 探活：页面回前台 → 立即 ping + 5s 死线（iOS 冻结恢复路径——
+        // 冻结期间连接可能已被中间设备掐断，visible 瞬间主动探测而非等 30s 周期）。
+        if (state !== "online") return out;
+        if (event.visible) {
+          out.push({ kind: "sendPing" });
+          armTimer("probe", PROBE_DEADLINE_MS, out);
+          // 周期心跳接管恢复（hidden 期间被取消；未取消时仅复位周期，无害）。
+          armTimer("heartbeat", HEARTBEAT_INTERVAL_MS, out);
+        } else {
+          // hidden：取消心跳周期与探活（页面冻结时省额度，恢复时探活接管）。
+          cancelTimer("heartbeat", out);
+          cancelTimer("probe", out);
+        }
         return out;
       }
       case "FRAME": {
