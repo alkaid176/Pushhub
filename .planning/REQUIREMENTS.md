@@ -11,7 +11,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **SRV-01**: 外部系统可通过 POST /send 发送通知（Send Key 鉴权），载荷含 title、body（Markdown）、可选 priority 标签
 - [ ] **SRV-02**: 消息载荷可附带快捷回复选项（string[]，上限 4 个）与 callback_url，随消息分发到客户端
-- [ ] **SRV-03**: 客户端可通过 WebSocket 连接频道（Channel Key 鉴权），同频道新消息实时扇出到所有在线连接
+- [x] **SRV-03**: 客户端可通过 WebSocket 连接频道（Channel Key 鉴权），同频道新消息实时扇出到所有在线连接
 - [ ] **SRV-04**: WebSocket 使用 DO Hibernation API（ctx.acceptWebSocket），空闲连接不计活跃时长
 - [ ] **SRV-05**: 消息持久化到 DO SQLite，每频道维护单调递增 seq；客户端重连/上线时通过 since 游标补拉错过的消息
 - [ ] **SRV-06**: 群聊语义：多个客户端连同一频道，消息互通、成员变更不丢消息
@@ -112,7 +112,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | SRV-01 | Phase 1 | Pending |
 | SRV-02 | Phase 1 | Pending |
-| SRV-03 | Phase 1 | Pending |
+| SRV-03 | Phase 1 | Complete |
 | SRV-04 | Phase 1 | Pending |
 | SRV-05 | Phase 1 | Pending |
 | SRV-06 | Phase 1 | Pending |
@@ -152,6 +152,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AND-06 | Phase 6 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 40 total（注：初始定义时误计为 33，逐条枚举实为 40，已修正）
 - Mapped to phases: 40
 - Unmapped: 0
