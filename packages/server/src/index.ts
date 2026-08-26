@@ -1,10 +1,12 @@
 /**
  * PushHub Worker 入口（无状态，10ms CPU 预算）。
  *
- * 路由（01-01 切片 + 01-03 校验链）：
+ * 路由（01-01 切片 + 01-03 校验链 + 01-05 Admin API）：
  *  - POST /api/send        Bearer Send Key -> KV sk: 预检 -> validateSendBody
  *                          入口即拒（413/400，不触 DO）-> DO /publish 转发
  *  - GET  /api/ws/:key     路径段 Channel Key -> KV ch: 预检 -> DO /ws 升级转发
+ *  - ANY  /api/admin/*     Bearer Admin Key 常时比较（D-13）-> admin.ts
+ *                          （POST/GET /api/admin/channels，D-12）
  *
  * 鉴权原则（Pattern 6/8）：无效密钥在 Worker 层即拒绝、不创建 DO stub
  * （省额度 + 防 DoS，T-01-02）；DO 只信 Worker 转发的 X-PH-Verified: 1 内部头。
@@ -14,6 +16,8 @@
  */
 import { ChatRoom } from "./chat-room";
 import { resolveSendKey, resolveChannelKey } from "./keys";
+import { handleAdminApi } from "./admin";
+import { errorEnvelope } from "./envelope";
 import { validateSendBody } from "@pushhub/shared/validators";
 
 // wrangler.jsonc exports 声明的 DO 类必须由入口模块导出（ChatRoom 类名部署即定型）。
@@ -24,14 +28,7 @@ const VERIFIED_HEADER = "X-PH-Verified";
 /** Worker→DO 可信内部头：限流分键（KEY-05）用的 Send Key 原值，不外泄响应。 */
 const SEND_KEY_HEADER = "X-PH-Send-Key";
 
-/** D-06 错误信封：HTTP 状态码 + 机器可读 code；message 为通用文案，不含堆栈与内部键名。 */
-function errorEnvelope(status: number, code: string, message: string): Response {
-  return new Response(JSON.stringify({ error: { code, message } }), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
-
+/** D-06 错误信封（唯一实现在 envelope.ts，index/admin 共用）。 */
 const INVALID_KEY = () => errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
 
 /**
@@ -95,6 +92,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
+
+    // Admin API（D-12/D-13）：前缀分发，鉴权在 admin.ts 内完成。
+    if (pathname.startsWith("/api/admin/")) {
+      return handleAdminApi(request, env);
+    }
 
     if (pathname === "/api/send" && request.method === "POST") {
       return handleSend(request, env);

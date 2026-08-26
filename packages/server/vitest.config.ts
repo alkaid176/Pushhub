@@ -12,6 +12,14 @@ export default defineConfig({
       wrangler: {
         configPath: "./wrangler.jsonc",
       },
+      // ADMIN_KEY 是 Worker secret（wrangler secret put，不在 wrangler.jsonc）：
+      // 插件读不到——经 miniflare.bindings 注入测试专用值（仅测试环境，
+      // 与生产 secret 无关，可安全入库；生产值绝不写入任何仓库文件）。
+      miniflare: {
+        bindings: {
+          ADMIN_KEY: "test-admin-key-0123456789abcdef",
+        },
+      },
     }),
   ],
 });
