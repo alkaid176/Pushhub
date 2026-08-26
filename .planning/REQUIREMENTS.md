@@ -54,11 +54,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 网页 SDK
 
-- [ ] **WEB-01**: pushhub.js 单文件分发（零依赖零构建），`<script>` 引入后 `new PushHub(serverUrl, channelKey)` 即可使用
-- [ ] **WEB-02**: SDK 实时接收频道消息并通过回调/事件暴露给宿主页面
+- [x] **WEB-01**: pushhub.js 单文件分发（零依赖零构建），`<script>` 引入后 `new PushHub(serverUrl, channelKey)` 即可使用
+- [x] **WEB-02**: SDK 实时接收频道消息并通过回调/事件暴露给宿主页面
 - [ ] **WEB-03**: SDK 支持宿主页面发起回复（快捷选项或自定义文本）
-- [ ] **WEB-04**: SDK 内置断线重连（指数退避+jitter）与离线补拉，宿主无感
-- [ ] **WEB-05**: SDK 提供消息渲染辅助（Markdown 渲染 + DOMPurify 消毒），也可仅暴露原始数据由宿主自行渲染
+- [x] **WEB-04**: SDK 内置断线重连（指数退避+jitter）与离线补拉，宿主无感
+- [x] **WEB-05**: SDK 提供消息渲染辅助（Markdown 渲染 + DOMPurify 消毒），也可仅暴露原始数据由宿主自行渲染
 
 ### 管理页与测试页
 
@@ -119,10 +119,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SRV-07 | Phase 1 | Complete |
 | KEY-01 | Phase 1 | Complete |
 | KEY-05 | Phase 1 | Complete |
-| WEB-01 | Phase 2 | Pending |
-| WEB-02 | Phase 2 | Pending |
-| WEB-04 | Phase 2 | Pending |
-| WEB-05 | Phase 2 | Pending |
+| WEB-01 | Phase 2 | Complete |
+| WEB-02 | Phase 2 | Complete |
+| WEB-04 | Phase 2 | Complete |
+| WEB-05 | Phase 2 | Complete |
 | KEY-02 | Phase 3 | Pending |
 | KEY-03 | Phase 3 | Pending |
 | KEY-04 | Phase 3 | Pending |

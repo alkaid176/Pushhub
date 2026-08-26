@@ -73,11 +73,11 @@ Plans:
   3. 含 `<script>`、`<img onerror>` 等攻击样本的消息经 SDK 渲染辅助输出安全 HTML（marked + DOMPurify 消毒），攻击样本 fixture 回归通过；宿主页面也可选择只接收原始数据自行渲染
   4. pushhub.js 由 Worker 静态资产从服务端域名直接分发，浏览器引入即可用，不产生 Worker 请求计费
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Tracer：pushhub.js 端到端最小切片（包 scaffold + SDK 核心 + 渲染消毒 + IIFE 构建 + 静态分发 + 真浏览器 E2E + 部署 0.1.5）
+- [x] 02-01-PLAN.md — Tracer：pushhub.js 端到端最小切片（包 scaffold + SDK 核心 + 渲染消毒 + IIFE 构建 + 静态分发 + 真浏览器 E2E + 部署 0.1.5）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -165,7 +165,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
-| 2. Web SDK 参考客户端 | 0/TBD | Not started | - |
+| 2. Web SDK 参考客户端 | 1/3 | In Progress|  |
 | 3. 管理页与密钥生命周期 | 0/TBD | Not started | - |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |
 | 5. Windows 桌面客户端（Tauri 2） | 0/TBD | Not started | - |

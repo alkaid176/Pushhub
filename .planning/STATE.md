@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 2
 current_phase_name: Web SDK 参考客户端
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-08-26T14:15:43.692Z"
+stopped_at: Completed 02-01-PLAN.md (web-sdk tracer)
+last_updated: "2026-08-26T15:19:42.456Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 2 execution started
-state_head: 5d5efb290f3cc86d54f13e46cb610c8ef4ad04e1
+state_head: f3d6b3bc5b1fb895e99c48846311a285be5460a0
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
   percent: 17
 ---
 
@@ -28,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 2 (Web SDK 参考客户端) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 2
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-08-26 — Phase 2 execution started
 
 Progress: [██░░░░░░░░] 17%
@@ -63,6 +63,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 01 P03 | 21min | 2 tasks | 14 files |
 | Phase 01 P04 | 97min | 3 tasks | 11 files |
 | Phase 01 P05 | 13min | 2 tasks | 10 files |
+| Phase 02 P01 | 55min | 4 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,10 @@ Recent decisions affecting current work:
 - [Phase 1]: [Phase 01] 01-05 KEY-01 闭合：D-06 错误信封抽 envelope.ts 单点实现（index/admin 共用，冻结契约禁两处漂移）；base62 生成用拒绝采样消除 256->62 取模偏差
 - [Phase 1]: [Phase 01] 01-05 版本规则定稿'部署前 +1'（部署记录版本即本次代码版本）；deploy 命令必须 pnpm run deploy（pnpm 拦截裸 deploy）
 - [Phase 1]: [Phase 01] 01-05 生产冒烟第二轮网络阻断（DNS 污染实锤：workers.dev 解析到 Facebook/Twitter IP）：smoke.mjs 定稿经本地真 workerd 全绿为功能等价证据（SMOKE OK/延迟 11ms/补拉恰 2 条），生产补跑沿用 WINDOWS.md 追踪
+- [Phase 2]: [Phase 02] 02-01 Task 1 包合法性门：用户 approved 全部 5 包（marked@18.0.11/dompurify@3.4.14/esbuild@0.28.2/jsdom@30.0.1/@playwright/test@1.62.1）
+- [Phase 2]: [Phase 02] 02-01 Task 2 SDK API 表面定稿（approve-recommended）：status 枚举 connecting/online/reconnecting/offline；error 载荷 {message,code?,fatal?}；不增补 off——one-way 契约进入产物
+- [Phase 2]: [Phase 02] 02-01 A1 spike：Chromium setOffline(true) 不关闭已建立 WS——02-02 断连混沌需改用调试句柄/CDP；重连补拉基准取连接前游标（syncBase 快照）保中段缺口零丢失
+- [Phase 2]: [Phase 02] 02-01 pushhub.js 生产分发就绪：0.1.5 部署（Version 644fadce）+ SC4 字节级验证（78,750 bytes min / 26,711 gzip）；deploy 链式先 build 后 deploy；本轮冒烟同时补验 0.1.3/0.1.4 积欠
 
 ### Pending Todos
 
@@ -109,6 +114,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-26T12:57:56.867Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-web-sdk/02-CONTEXT.md
+Last session: 2026-08-26T15:19:42.157Z
+Stopped at: Completed 02-01-PLAN.md (web-sdk tracer)
+Resume file: None
