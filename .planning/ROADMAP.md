@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 无效或缺失密钥的 /send 请求与 WS 连接被拒绝；单个 Send Key 超过每分钟 30 条限流时收到 429
   5. shared/ 协议包（TS 类型 + golden JSON fixtures，含版本字段）就位，服务端测试对正反例 fixture 全部通过——这是三端移植的契约基线
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans executed
 Plans:
 **Wave 1**
 
@@ -56,7 +56,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 01-05-PLAN.md — 三级密钥闭合：密钥写路径 + Admin API 最小集 + D-15 完整冒烟固化
+- [x] 01-05-PLAN.md — 三级密钥闭合：密钥写路径 + Admin API 最小集 + D-15 完整冒烟固化
 
 **Research note**: 建议带研究复查（wrangler types 与 vitest-pool-workers 兼容性 known-issues）；DO 类名（ChatRoom）首版即定终身命名，不可随意改名
 
@@ -151,7 +151,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 服务端核心与协议冻结 | 4/5 | In Progress|  |
+| 1. 服务端核心与协议冻结 | 5/5 | In Progress|  |
 | 2. Web SDK 参考客户端 | 0/TBD | Not started | - |
 | 3. 管理页与密钥生命周期 | 0/TBD | Not started | - |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |

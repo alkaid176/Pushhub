@@ -19,7 +19,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 密钥与安全
 
-- [ ] **KEY-01**: 三级密钥体系：Admin Key（管理操作）、Send Key（只发送）、Channel Key（接收+回复）
+- [x] **KEY-01**: 三级密钥体系：Admin Key（管理操作）、Send Key（只发送）、Channel Key（接收+回复）
 - [ ] **KEY-02**: Web 管理页（Admin Key 登录）可创建/删除/重置频道及其密钥
 - [ ] **KEY-03**: 每频道可创建多个 Send Key，可单独吊销——不同脚本/系统用不同 Key，泄露不互伤
 - [ ] **KEY-04**: 任一级密钥可单独重置，重置后旧密钥立即失效（Channel Key 重置不丢失频道历史）
@@ -117,7 +117,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SRV-05 | Phase 1 | Complete |
 | SRV-06 | Phase 1 | Complete |
 | SRV-07 | Phase 1 | Complete |
-| KEY-01 | Phase 1 | Pending |
+| KEY-01 | Phase 1 | Complete |
 | KEY-05 | Phase 1 | Complete |
 | WEB-01 | Phase 2 | Pending |
 | WEB-02 | Phase 2 | Pending |

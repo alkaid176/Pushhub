@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 current_phase: 1
 current_phase_name: 服务端核心与协议冻结
-status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-08-26T09:13:10.095Z"
+status: verifying
+stopped_at: "Completed 01-05-PLAN.md (Phase 1 complete: 5/5 plans)"
+last_updated: "2026-08-26T11:28:25.518Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 1 execution started
-state_head: 68842cba6b7ba81ca85170d5e11940a9238c5f77
+state_head: f343e3466e784136342c04b9f1ad85c81764b924
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 
 Phase: 1 (服务端核心与协议冻结) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-26 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -62,6 +62,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P02 | 20min | 3 tasks | 27 files |
 | Phase 01 P03 | 21min | 2 tasks | 14 files |
 | Phase 01 P04 | 97min | 3 tasks | 11 files |
+| Phase 01 P05 | 13min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,9 @@ Recent decisions affecting current work:
 - [Phase 01]: [Phase 01] 01-04 Flagged Assumption SRV-05 裁决：limit 越界语义按 01-02 逐字节冻结契约落地（invalid_frame），不做静默钳制——协议 one-way 门优先；clampSyncLimit 仅作 SQL 层纵深防线
 - [Phase 01]: [Phase 01] 01-04 workerd 同 isolate 实证：WS message 事件即发即弃不排队——测试监听必须 attach-before-trigger 且与 accept() 间零 await（connect() 预挂首帧监听模式，供 01-05/Phase 2 复用）
 - [Phase 01]: [Phase 01] 01-04 生产冒烟让位于网络现实：workers.dev SNI 阻断 ~75 分钟（部署 e20626bf 成功，冒烟待补验记入 WINDOWS.md）；独立发现 wrangler dev --remote 不支持 SQLite-backed DO——生产差异验证只能走 workers.dev
+- [Phase 1]: [Phase 01] 01-05 KEY-01 闭合：D-06 错误信封抽 envelope.ts 单点实现（index/admin 共用，冻结契约禁两处漂移）；base62 生成用拒绝采样消除 256->62 取模偏差
+- [Phase 1]: [Phase 01] 01-05 版本规则定稿'部署前 +1'（部署记录版本即本次代码版本）；deploy 命令必须 pnpm run deploy（pnpm 拦截裸 deploy）
+- [Phase 1]: [Phase 01] 01-05 生产冒烟第二轮网络阻断（DNS 污染实锤：workers.dev 解析到 Facebook/Twitter IP）：smoke.mjs 定稿经本地真 workerd 全绿为功能等价证据（SMOKE OK/延迟 11ms/补拉恰 2 条），生产补跑沿用 WINDOWS.md 追踪
 
 ### Pending Todos
 
@@ -105,6 +109,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-26T09:13:10.080Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-08-26T11:28:25.502Z
+Stopped at: Completed 01-05-PLAN.md (Phase 1 complete: 5/5 plans)
 Resume file: None
