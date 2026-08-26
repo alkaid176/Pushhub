@@ -1,0 +1,40 @@
+// PushHub Worker 配置
+// - exports 声明 ChatRoom DO 类（sqlite-backed，Free 计划强制 sqlite）。
+//   注意：exports 与 migrations 数组互斥且一旦部署不可回退（Pitfall 2）——
+//   ChatRoom 类名首版部署即定型，不可改名。
+// - kv_namespaces.id 为占位符，真实 namespace id 在首次部署时创建并回填（01-01 Task 3）。
+{
+  "name": "pushhub",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-25",
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHANNELS",
+        "class_name": "ChatRoom"
+      }
+    ]
+  },
+  "exports": {
+    "ChatRoom": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "local-placeholder"
+    }
+  ],
+
+  // asset-first：静态资产命中不触发 Worker（免费不限量）；/api/* 无资产可命中自然落到 Worker。
+  // public/ 内文件路径不得以 api 前缀开头（asset-first 遮蔽风险，Pitfall 6）。
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  }
+}

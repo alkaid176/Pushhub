@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# wrangler local state & generated dev artifacts
+.wrangler/
+
+# local secrets (never commit)
+.dev.vars
+.dev.vars.*
+
+# build output
+dist/
+
+# vitest temporary
+.vitest/

@@ -1,0 +1,20 @@
+{
+  "name": "@pushhub/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --max-workers=1 --no-isolate",
+    "cf-typegen": "wrangler types --include-runtime=false",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@pushhub/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.126.0"
+  }
+}
