@@ -632,19 +632,24 @@ export default defineConfig({
 
 **其余所有平台/API 事实均标注 [VERIFIED: …]（本会话官方文档直读）或 [CITED: …]。**
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> 2026-08-26 规划期全部裁决完毕——逐条 RESOLVED 注文指向落实位置。
 
 1. **`@cloudflare/vitest-plugin` 实际成熟度**（A1）
    - What we know: 官方仓库、官方文档全面采用、peer 精确匹配 vitest ^4.1.0、vitest-plugin-examples 含 durable-objects/kv-r2-caches 等完整 fixture。
    - What's unclear: 6 天龄在边角（alarm 隔离、WS no-isolate 组合）的实战表现。
    - Recommendation: 测试基建任务置于 Wave 0，加 checkpoint:human-verify；首个测试文件即覆盖 WS+DO 路径作为冒烟。
+   - **RESOLVED:** 已由 01-01 Task 1 落实——blocking-human 包合法性检查点人工裁决（approve-plugin 用 vitest-plugin 1.1.0 / use-fallback 切 vitest-pool-workers 0.22.0），01-01 Task 2 按裁决参数化包名与 vitest.config 写法，两路均可继续。
 2. **20:1 折算是否作用于免费层强制限额**（见 State of the Art 表）
    - What we know: 文档明确 "billing-only" 口径 + 免费层超限即报错。
    - What's unclear: 免费层限额检查是否用折算后计数（文档未逐字）。
    - Recommendation: 维持 1:1 保守规划不动摇；上线后对照 dashboard 实际计数即可 empirically 确认，无前置动作。
+   - **RESOLVED:** 规划维持 1:1 保守口径（个人/小团队消息量远低于任一口径限额，两可无实际影响，无需前置动作）；上线后经 D-15 checklist ④ 的 dashboard 请求曲线做 empirical 复核。
 3. **固定窗口 vs 滑动窗口限流的产品语义**
    - What we know: CONTEXT 把实现定为自由裁量；固定窗口边界可 2× 突发。
    - Recommendation: 默认固定 60s 窗口；若 discuss 阶段用户在意边界突发，改 30s×15 即可（同表结构）。
+   - **RESOLVED:** 已由 01-03 Task 2 裁决为固定 60s 窗口 / 30 条实现（rate_sends 表，本研究 Pattern 5）；边界 2× 突发作为 flagged assumption 文档化接受（01-03 Flagged Assumptions 的 KEY-05 行），如需平滑改 30s×15 仅调 shared 常量不动表结构。
 
 ## Environment Availability
 
