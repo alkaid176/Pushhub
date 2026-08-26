@@ -28,9 +28,9 @@ importers:
         version: 4.126.0
 
   packages/shared:
-    dependencies:
+    devDependencies:
       typescript:
-        specifier: ^7.0.2
+        specifier: 7.0.2
         version: 7.0.2
 
 packages:
