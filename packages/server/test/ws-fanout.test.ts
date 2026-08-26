@@ -84,6 +84,13 @@ describe("ws fanout (walking skeleton)", () => {
     socket1.accept();
     socket2.accept();
 
+    // 01-04 起 accept 后立即推送首拉 history 帧（D-09）——排空后再监听
+    // message 帧（此刻频道已有 seq=1 一条，两连接各收含它的 history 帧）。
+    for (const socket of [socket1, socket2]) {
+      const initialHistory = await nextFrame(socket);
+      expect(initialHistory.type).toBe("history");
+    }
+
     // 4. 第二条消息：双客户端均应收到 v:1 message 帧，seq=2，text 逐字一致。
     const received1 = nextFrame(socket1);
     const received2 = nextFrame(socket2);

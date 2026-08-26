@@ -1,12 +1,15 @@
 /**
  * ChatRoom —— 每频道一个实例的扇出中心（Durable Object，SQLite-backed）。
  *
- * 职责（01-01 切片 + 01-03 发送侧完整化）：
+ * 职责（01-01 切片 + 01-03 发送侧 + 01-04 接收侧）：
  *  - publish 内部请求：冻结校验器纵深防御 → seq 分配（显式 COALESCE(MAX)+1，
  *    禁 AUTOINCREMENT）→ 全字段 SQLite 落库（options 序列化 JSON 字符串、
  *    空省存 NULL）→ 冻结 MessageFrame 全连接扇出
  *  - WS 升级：Hibernation API 三件套（acceptWebSocket / serializeAttachment /
- *    setWebSocketAutoResponse）——空闲不计时长（SRV-04）
+ *    setWebSocketAutoResponse）——空闲不计时长（SRV-04）；
+ *    accept 成功后立即推送首拉 history 帧（最近 INITIAL_FETCH 条，D-09）
+ *  - webSocketMessage：validateInboundFrame 白名单校验（v:1/type/since/limit）
+ *    → sync 补拉（keyset 翻页 + limit 钳制 + oldest_kept_seq，D-10/D-11）
  *
  * 内存字段一律视为可丢弃缓存：休眠唤醒即清空，可从 getWebSockets / attachment /
  * SQLite 重建（PITFALLS 2.2）。
@@ -16,15 +19,24 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import {
+  INITIAL_FETCH,
   PROTOCOL_VERSION,
   RATE_LIMIT_PER_MIN,
   RATE_WINDOW_MS,
+  SYNC_LIMIT_DEFAULT,
+  SYNC_LIMIT_MAX,
   WID_LENGTH,
   WID_PREFIX,
+  type HistoryFrame,
   type MessageFrame,
   type Priority,
+  type WsErrorFrame,
 } from "@pushhub/shared";
-import { validateSendBody, type NormalizedSendBody } from "@pushhub/shared/validators";
+import {
+  validateInboundFrame,
+  validateSendBody,
+  type NormalizedSendBody,
+} from "@pushhub/shared/validators";
 
 // ---- WS 帧字面量（D-07：全帧带版本；两串各远小于 2048 字符上限）----
 // 客户端应用层心跳：发 PING_FRAME 原文即被 setWebSocketAutoResponse 零唤醒自动回应。
@@ -88,6 +100,77 @@ function errorEnvelope(status: number, code: string, message: string): Response 
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+// ---- 补拉查询（01-04）：全 13 列显式列出（哑管道——text/options/URL 逐字透传，
+// 不 SELECT * 以免列序漂移），seq 主键天然支持 keyset 分页（不建二级索引）。----
+const MESSAGE_COLUMNS =
+  "seq, wid, title, text, options, callback_url, click_url, priority, " +
+  "answered, answered_by, answered_at, answered_content, created_at";
+
+/** messages 表行的 TS 形态（options 为 JSON 字符串或 NULL；answered 为 0/1）。 */
+interface MessageRow {
+  seq: number;
+  wid: string;
+  title: string | null;
+  text: string;
+  options: string | null;
+  callback_url: string | null;
+  click_url: string | null;
+  priority: string;
+  answered: number;
+  answered_by: string | null;
+  answered_at: number | null;
+  answered_content: string | null;
+  created_at: number;
+}
+
+/**
+ * 行 → 冻结 MessageFrame（与 publish 扇出帧逐字段同构，含省略语义：
+ * 可选字段 NULL 时键不出现、options 反序列化为 string[]、answered 0/1 → boolean）。
+ * history 帧内消息与实时扇出消息形态完全一致——客户端单条渲染路径（SRV-06）。
+ */
+function rowToMessageFrame(row: MessageRow): MessageFrame {
+  const frame: MessageFrame = {
+    v: PROTOCOL_VERSION,
+    type: "message",
+    wid: row.wid,
+    seq: row.seq,
+    ...(row.title !== null ? { title: row.title } : {}),
+    text: row.text,
+    ...(row.options !== null
+      ? { options: JSON.parse(row.options) as string[] }
+      : {}),
+    ...(row.callback_url !== null ? { callback_url: row.callback_url } : {}),
+    ...(row.click_url !== null ? { click_url: row.click_url } : {}),
+    priority: row.priority as Priority,
+    answered: row.answered !== 0,
+    answered_by: row.answered_by,
+    answered_at: row.answered_at,
+    answered_content: row.answered_content,
+    created_at: row.created_at,
+  };
+  return frame;
+}
+
+/**
+ * D-11 limit 钳制三态：缺省 SYNC_LIMIT_DEFAULT；大于上限压到 SYNC_LIMIT_MAX；
+ * 小于 1 抬到 1。经 validateInboundFrame 的入站 limit 恒为 [1, MAX] 整数或
+ * 缺省（越界值在冻结校验器处已回 invalid_frame——fixtures 逐字节冻结的反例
+ * 语义，Flagged Assumption 按冻结契约落地）；本钳制是对 SQL 层的纵深防线
+ * （limit+1 取行前任何值都不越界），缺省分支是热路径。
+ */
+function clampSyncLimit(limit: number | undefined): number {
+  if (limit === undefined) {
+    return SYNC_LIMIT_DEFAULT;
+  }
+  if (limit > SYNC_LIMIT_MAX) {
+    return SYNC_LIMIT_MAX;
+  }
+  if (limit < 1) {
+    return 1;
+  }
+  return limit;
 }
 
 export class ChatRoom extends DurableObject {
@@ -261,7 +344,13 @@ export class ChatRoom extends DurableObject {
     return null;
   }
 
-  /** WS 升级：acceptWebSocket（绝不调用标准 accept——烧时长额度，Anti-Pattern #1）。 */
+  /**
+   * WS 升级：acceptWebSocket（绝不调用标准 accept——烧时长额度，Anti-Pattern #1）。
+   * 升级路径零 await、全部同步（SQLite 读即 .toArray() 收完，Pitfall 9）——
+   * accept 成功后立即推送首拉 history 帧（最近 INITIAL_FETCH 条，D-09），
+   * 帧在返回 101 前入队（DO 无 waitUntil——响应返回后浮空 Promise 不可靠，
+   * 同步入队是唯一可靠的首连推送点）。
+   */
   private handleWebSocketUpgrade(): Response {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -271,15 +360,91 @@ export class ChatRoom extends DurableObject {
       clientId: crypto.randomUUID(),
       connectedAt: Date.now(),
     });
+    this.sendHistory(server, null, undefined);
     return new Response(null, { status: 101, webSocket: client });
   }
 
   /**
-   * 入站业务帧：本期收到非 ping 业务帧时忽略（sync 补拉处理归 01-04）。
-   * ping/pong 由 auto-response 零唤醒自动回应，不会进入本处理器。
+   * 入站业务帧（01-04）：非 string（ArrayBuffer）直接忽略；string 先过
+   * validateInboundFrame（冻结白名单：v:1 / type 枚举 / since/limit 结构，
+   * 任何入站字符串不直接进 SQL，T-01-07）。
+   *  - 校验失败 → 回 WsErrorFrame（invalid_version / invalid_frame）后返回，
+   *    连接保持（Flagged Assumption SRV-07：服务端忽略坏帧不断连——
+   *    "不识别的 v 即断连"是客户端侧职责，D-07）；
+   *  - ping → 防御性忽略（auto-response 零唤醒层已按字节匹配拦截，理论上
+   *    收不到；键序不同的 ping 帧落进来也不应导致任何状态变化）；
+   *  - sync → keyset 补拉（sendHistory）。
    */
-  async webSocketMessage(_ws: WebSocket, _message: string | ArrayBuffer): Promise<void> {
-    // 01-04 将在此处理 {"type":"sync", since, limit} 帧。
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== "string") {
+      return;
+    }
+    const validation = validateInboundFrame(message);
+    if (!validation.ok) {
+      const errorFrame: WsErrorFrame = {
+        v: PROTOCOL_VERSION,
+        type: "error",
+        code: validation.code,
+        message: validation.message,
+      };
+      ws.send(JSON.stringify(errorFrame));
+      return;
+    }
+    const frame = validation.frame;
+    if (frame.type === "ping") {
+      return;
+    }
+    this.sendHistory(ws, frame.since, frame.limit);
+  }
+
+  /**
+   * 补拉核心（D-09/D-10/D-11）——全程同步（游标 .toArray() 即收，零跨 await，
+   * Pitfall 9），响应一条 history 帧：
+   *  - since === null（首拉）：最近 INITIAL_FETCH 条——seq 降序 LIMIT n+1
+   *    取回后内存反转（升序输出），多取的 1 条即 has_more 证据；
+   *  - since 为数字（增量）：keyset 查询 WHERE seq > ? ORDER BY seq ASC
+   *    LIMIT n+1（多取 1 条判定 has_more，返回前裁掉——禁 OFFSET 分页）；
+   *  - limit 经 clampSyncLimit 钳制（缺省 200 / 钳 [1, 500]）；
+   *  - oldest_kept_seq = MIN(seq)（空频道为 0）——请求的 since 早于它时
+   *    客户端呈现"更早消息已清理"分隔线，不报错不断连（D-10 诚实缺口语义）。
+   */
+  private sendHistory(ws: WebSocket, since: number | null, limit?: number): void {
+    const oldestRow = this.ctx.storage.sql
+      .exec("SELECT MIN(seq) AS m FROM messages")
+      .one() as { m: number | null };
+
+    let rows: MessageRow[];
+    let hasMore: boolean;
+    if (since === null) {
+      const fetched = this.ctx.storage.sql
+        .exec(
+          `SELECT ${MESSAGE_COLUMNS} FROM messages ORDER BY seq DESC LIMIT ?1`,
+          INITIAL_FETCH + 1,
+        )
+        .toArray() as unknown as MessageRow[];
+      hasMore = fetched.length > INITIAL_FETCH;
+      rows = (hasMore ? fetched.slice(0, INITIAL_FETCH) : fetched).reverse();
+    } else {
+      const capped = clampSyncLimit(limit);
+      const fetched = this.ctx.storage.sql
+        .exec(
+          `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq > ?1 ORDER BY seq ASC LIMIT ?2`,
+          since,
+          capped + 1,
+        )
+        .toArray() as unknown as MessageRow[];
+      hasMore = fetched.length > capped;
+      rows = hasMore ? fetched.slice(0, capped) : fetched;
+    }
+
+    const frame: HistoryFrame = {
+      v: PROTOCOL_VERSION,
+      type: "history",
+      messages: rows.map(rowToMessageFrame),
+      oldest_kept_seq: oldestRow.m ?? 0,
+      has_more: hasMore,
+    };
+    ws.send(JSON.stringify(frame));
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

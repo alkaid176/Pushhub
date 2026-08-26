@@ -83,6 +83,11 @@ describe("POST /api/send payload field passthrough (SRV-02)", () => {
     );
     socket.accept();
 
+    // 01-04 起连接即收首拉 history 帧（D-09）——排空后再监听 message 帧
+    //（此刻频道为空：messages 空数组）。
+    const initialHistory = await nextMessage(socket);
+    expect(initialHistory.type).toBe("history");
+
     // text 含 Markdown 语法 + 尖括号标签字符 + URL + 反引号——哑管道逐字节透传。
     const sentText = "# 标题 *emphasis* <script>alert(1)</script> `code` [link](https://example.com/x?a=1&b=2)";
     const sentOptions = ["确认", "重试", "升级"];
@@ -153,6 +158,10 @@ describe("POST /api/send payload field passthrough (SRV-02)", () => {
       }),
     );
     socket.accept();
+
+    // 排空首拉 history 帧（D-09，01-04 起 accept 后立即推送）。
+    const initialHistory = await nextMessage(socket);
+    expect(initialHistory.type).toBe("history");
 
     const framePromise = nextMessage(socket);
     const resp = await sendRequest(sendKey, { text: "empty options", options: [] });
