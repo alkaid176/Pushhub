@@ -110,13 +110,52 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (待 roadmap 创建时填充) | | |
+| SRV-01 | Phase 1 | Pending |
+| SRV-02 | Phase 1 | Pending |
+| SRV-03 | Phase 1 | Pending |
+| SRV-04 | Phase 1 | Pending |
+| SRV-05 | Phase 1 | Pending |
+| SRV-06 | Phase 1 | Pending |
+| SRV-07 | Phase 1 | Pending |
+| KEY-01 | Phase 1 | Pending |
+| KEY-05 | Phase 1 | Pending |
+| WEB-01 | Phase 2 | Pending |
+| WEB-02 | Phase 2 | Pending |
+| WEB-04 | Phase 2 | Pending |
+| WEB-05 | Phase 2 | Pending |
+| KEY-02 | Phase 3 | Pending |
+| KEY-03 | Phase 3 | Pending |
+| KEY-04 | Phase 3 | Pending |
+| ADM-01 | Phase 3 | Pending |
+| ADM-02 | Phase 3 | Pending |
+| ADM-03 | Phase 3 | Pending |
+| ADM-05 | Phase 3 | Pending |
+| RPL-01 | Phase 4 | Pending |
+| RPL-02 | Phase 4 | Pending |
+| RPL-03 | Phase 4 | Pending |
+| RPL-04 | Phase 4 | Pending |
+| RPL-05 | Phase 4 | Pending |
+| KEY-06 | Phase 4 | Pending |
+| WEB-03 | Phase 4 | Pending |
+| ADM-04 | Phase 4 | Pending |
+| WIN-01 | Phase 5 | Pending |
+| WIN-02 | Phase 5 | Pending |
+| WIN-03 | Phase 5 | Pending |
+| WIN-04 | Phase 5 | Pending |
+| WIN-05 | Phase 5 | Pending |
+| WIN-06 | Phase 5 | Pending |
+| AND-01 | Phase 6 | Pending |
+| AND-02 | Phase 6 | Pending |
+| AND-03 | Phase 6 | Pending |
+| AND-04 | Phase 6 | Pending |
+| AND-05 | Phase 6 | Pending |
+| AND-06 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 33 total
-- Mapped to phases: 0
-- Unmapped: 33 ⚠️
+- v1 requirements: 40 total（注：初始定义时误计为 33，逐条枚举实为 40，已修正）
+- Mapped to phases: 40
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-08-26*
-*Last updated: 2026-08-26 after initial definition*
+*Last updated: 2026-08-26 after roadmap creation (traceability filled, 40/40 mapped)*
