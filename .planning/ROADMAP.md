@@ -13,7 +13,7 @@
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: 服务端核心与协议冻结** - POST /send → WS 实时扇出 → 断线补拉的消息管道在免费额度内端到端跑通；线协议 + golden fixtures 冻结
+- [x] **Phase 1: 服务端核心与协议冻结** - POST /send → WS 实时扇出 → 断线补拉的消息管道在免费额度内端到端跑通；线协议 + golden fixtures 冻结 (completed 2026-08-26)
 - [ ] **Phase 2: Web SDK 参考客户端** - 单文件 pushhub.js 零依赖接入，重连 + 补拉 + 消毒渲染，作为三端移植的参考实现
 - [ ] **Phase 3: 管理页与密钥生命周期** - Admin Key 登录的 Web 管理页：频道增删、多 Send Key、分级重置、消息历史排障
 - [ ] **Phase 4: 回复链与回调送达** - 旗舰闭环：快捷选项/自定义回复、answered 状态同步、签名回调 POST + 重试；测试页成为三端联调工具
@@ -151,7 +151,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 服务端核心与协议冻结 | 5/5 | In Progress|  |
+| 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
 | 2. Web SDK 参考客户端 | 0/TBD | Not started | - |
 | 3. 管理页与密钥生命周期 | 0/TBD | Not started | - |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |

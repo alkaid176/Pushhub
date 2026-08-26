@@ -12,17 +12,16 @@ Webhook 发送方发出的消息，配置了同一通知密钥的所有客户端
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Webhook 发送 API：外部系统 POST 消息（Markdown 格式），可附带快捷回复选项与 callback_url — Phase 1
+- ✓ 实时分发：Durable Objects 管理 WebSocket 连接与消息扇出（生产延迟 253ms，验收线 2000ms）— Phase 1
+- ✓ 历史消息：客户端离线再上线可拉取错过的消息（DO 内置 SQLite，since 游标补拉零丢失零重复）— Phase 1
+- ✓ 群聊：多个客户端配置同一 Channel Key，消息互通、成员可见 — Phase 1
+- ✓ 分级密钥体系：Admin/Send/Channel 三级隔离，双向不可通用 — Phase 1
+- ✓ 服务端运行在 Cloudflare Worker 免费额度上（Hibernation 生产验证：空闲 DO duration 平直不增长）— Phase 1
 
 ### Active
 
-- [ ] 服务端运行在 Cloudflare Worker 免费额度上，无服务器成本
-- [ ] 分级密钥体系：Admin Key（管理）、Send Key（只发送）、Channel Key（接收+回复），可单独重置
 - [ ] 服务端管理页：创建/删除/重置通知密钥（=频道/群）
-- [ ] Webhook 发送 API：外部系统 POST 消息（Markdown 格式），可附带快捷回复选项与 callback_url
-- [ ] 群聊：多个客户端配置同一 Channel Key，消息互通、成员可见
-- [ ] 实时分发：Durable Objects 管理 WebSocket 连接与消息扇出
-- [ ] 历史消息：客户端离线再上线可拉取错过的消息（Durable Objects 内置存储）
 - [ ] 双向通信：客户端可回复消息（快捷选项由发送方随消息提供，或自定义输入，Markdown 格式）
 - [ ] 回调送达：有人回复时，服务端自动把回复 POST 回发送方提供的 callback_url
 - [ ] Windows 桌面客户端（Tauri 2）：系统托盘常驻 + Windows 原生通知 + 消息窗口 + 回复
@@ -63,12 +62,13 @@ Webhook 发送方发出的消息，配置了同一通知密钥的所有客户端
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Durable Objects 做实时分发 | CF 官方推荐方案，WebSocket hibernation 省 CPU，内置 SQLite 存历史消息，免费额度可用 | — Pending |
-| 回复送达用回调 URL（非轮询） | 实时、无状态，最适合自动化系统；发送方随消息附带 callback_url | — Pending |
-| 快捷回复选项由发送方随消息提供 | 发送方最清楚该消息适合哪些回复选项（如"确认/忽略"），客户端只渲染不预设 | — Pending |
-| 分级密钥 Admin/Send/Channel | 泄露可单独重置；Send Key 可交给发通知的脚本而不暴露频道控制权 | — Pending |
+| Durable Objects 做实时分发 | CF 官方推荐方案，WebSocket hibernation 省 CPU，内置 SQLite 存历史消息，免费额度可用 | ✓ Phase 1 验证：生产延迟 253ms，空闲 duration 平直 |
+| 回复送达用回调 URL（非轮询） | 实时、无状态，最适合自动化系统；发送方随消息附带 callback_url | — Pending（Phase 2+） |
+| 快捷回复选项由发送方随消息提供 | 发送方最清楚该消息适合哪些回复选项（如"确认/忽略"），客户端只渲染不预设 | — Pending（协议字段已冻结） |
+| 分级密钥 Admin/Send/Channel | 泄露可单独重置；Send Key 可交给发通知的脚本而不暴露频道控制权 | ✓ Phase 1 验证：三级隔离测试全绿 |
 | 安卓端选原生 Kotlin（非 RN） | 后台常驻 WebSocket + 前台服务通知，原生最稳定可靠 | — Pending |
-| 历史消息存 DO 内置存储 | 不引入 D1/R2 额外复杂度，单群内查询天然高效 | — Pending |
+| 历史消息存 DO 内置存储 | 不引入 D1/R2 额外复杂度，单群内查询天然高效 | ✓ Phase 1 验证：220 条补拉零丢失零重复 |
+| 自定义域名 pushhub.dyun.org 作为生产入口 | workers.dev 在国内被 SNI 阻断 + DNS 污染；自有域名经 CF 可正常解析 | ✓ Phase 1 UAT 确认：全链路经此域名验证通过 |
 
 ## Evolution
 
