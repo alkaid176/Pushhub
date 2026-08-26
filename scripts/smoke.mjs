@@ -16,7 +16,8 @@
  *   c. 打开 WS /api/ws/<channelKey>，再发第二条消息，断言收到 v:1 message 帧且 text
  *      一致，打印端到端延迟毫秒数（验收 1 的量化证据）
  *   d. 断言无效 Send Key 得 401 + code: invalid_key 信封
- *   e. 全部通过输出 SMOKE OK；任何一步失败非零退出
+ *   e. 断言超限载荷（text 32769 字符）得 413 + code: payload_too_large（D-02 契约）
+ *   f. 全部通过输出 SMOKE OK；任何一步失败非零退出
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
@@ -159,5 +160,26 @@ const errBody = await respBad.json();
 if (errBody?.error?.code !== "invalid_key") fail("invalid-key", `bad envelope: ${JSON.stringify(errBody)}`);
 console.log("OK [invalid-key]: 401 + error.code=invalid_key");
 
-// ---- e. 全绿 ----
+// ---- e. 超限载荷 -> 413 + payload_too_large（text 32769 字符，D-02 上限 32768）----
+const oversizedText = "a".repeat(32769);
+let respBig;
+try {
+  respBig = await fetch(`${baseUrl}/api/send`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SEND_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ text: oversizedText }),
+  });
+} catch (err) {
+  fail("oversized", `fetch failed: ${err.message}`);
+}
+if (respBig.status !== 413) {
+  fail("oversized", `expected 413, got ${respBig.status}: ${await respBig.text()}`);
+}
+const bigBody = await respBig.json();
+if (bigBody?.error?.code !== "payload_too_large") {
+  fail("oversized", `bad envelope: ${JSON.stringify(bigBody)}`);
+}
+console.log("OK [oversized]: 413 + error.code=payload_too_large (32769-char text rejected at edge)");
+
+// ---- f. 全绿 ----
 console.log("SMOKE OK");

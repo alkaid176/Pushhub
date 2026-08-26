@@ -73,7 +73,8 @@ WS 帧侧（`WsErrorFrame`）：
 | `INITIAL_FETCH` | 50 | D-09 首次连接默认拉取条数 |
 | `SYNC_LIMIT_DEFAULT` | 200 | D-11 sync limit 缺省值 |
 | `SYNC_LIMIT_MAX` | 500 | D-11 sync limit 上限 |
-| `RATE_LIMIT_PER_MIN` | 30 | KEY-05（可配置，超限 429） |
+| `RATE_LIMIT_PER_MIN` | 30 | KEY-05 每分钟限发条数（可配置，超限 429） |
+| `RATE_WINDOW_MS` | 60000 | KEY-05 固定窗口长度毫秒（窗口滚动计数重置；边界允许瞬时 2× 突发，文档化接受） |
 | `WID_PREFIX` / `WID_LENGTH` | `m_` / 16 | D-05 对外消息 ID 形态 |
 
 省略语义（SRV-02 边界，`validateSendBody` 归一规则）：可选字段的 `null`

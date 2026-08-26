@@ -49,6 +49,9 @@ export const SYNC_LIMIT_MAX = 500;
 /** KEY-05 每 Send Key 每分钟限发条数（可配置常量，默认 30，超限 429）。 */
 export const RATE_LIMIT_PER_MIN = 30;
 
+/** KEY-05 固定窗口长度（毫秒，60 秒）。窗口滚动后计数重置；阈值/窗口改动只改本文件。 */
+export const RATE_WINDOW_MS = 60_000;
+
 /** D-05 对外消息 ID（wid）前缀：m_ 表消息。 */
 export const WID_PREFIX = "m_";
 

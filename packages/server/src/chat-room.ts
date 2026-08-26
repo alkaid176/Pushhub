@@ -17,6 +17,8 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   PROTOCOL_VERSION,
+  RATE_LIMIT_PER_MIN,
+  RATE_WINDOW_MS,
   WID_LENGTH,
   WID_PREFIX,
   type MessageFrame,
@@ -28,6 +30,10 @@ import { validateSendBody, type NormalizedSendBody } from "@pushhub/shared/valid
 // 客户端应用层心跳：发 PING_FRAME 原文即被 setWebSocketAutoResponse 零唤醒自动回应。
 const PING_FRAME = '{"v":1,"type":"ping"}';
 const PONG_FRAME = '{"v":1,"type":"pong"}';
+
+// Worker→DO 可信内部头：限流分键（KEY-05）用的 Send Key 原值（与 index.ts 同名约定，
+// 经 X-PH-Verified 可信通道随内部请求到达，不外泄任何响应）。
+const SEND_KEY_HEADER = "X-PH-Send-Key";
 
 // ---- messages 表：Phase 1 冻结版 13 列 DDL（Pattern 4，不建二级索引）----
 // seq 频道内单调游标（显式赋值）；wid 对外 ID（m_ + 16 字符，D-05）；
@@ -47,6 +53,18 @@ const CREATE_MESSAGES_DDL = `
     answered_at      INTEGER,
     answered_content TEXT,
     created_at       INTEGER NOT NULL
+  )
+`;
+
+// ---- rate_sends 表（KEY-05，Pattern 5 逐字）：每 Send Key 固定窗口计数 ----
+// Send Key 单频道归属（sk:<key> -> channelId）使计数天然落在同一 ChatRoom DO，
+// 单线程无竞态；每条消息限流开销 = +1 行读 +1 行写。
+// 过期桶行随每日清理 alarm 一并清理（D-08，alarm 本身归 01-04+）。
+const CREATE_RATE_SENDS_DDL = `
+  CREATE TABLE IF NOT EXISTS rate_sends (
+    send_key     TEXT PRIMARY KEY,
+    window_start INTEGER NOT NULL,
+    count        INTEGER NOT NULL
   )
 `;
 
@@ -77,6 +95,7 @@ export class ChatRoom extends DurableObject {
     super(ctx, env);
     // 幂等 DDL：构造器在每次唤醒时重跑（休眠唤醒后实例状态清空）。
     ctx.storage.sql.exec(CREATE_MESSAGES_DDL);
+    ctx.storage.sql.exec(CREATE_RATE_SENDS_DDL);
     // auto-response 必须在构造器重设——休眠唤醒后不复活（Pitfall 3）。
     // 协议层 ping/pong 由运行时自动应答且不唤醒 DO（零计费零时长）。
     // WebSocketRequestResponsePair 是 workerd 运行时全局构造器（同 WebSocketPair），
@@ -110,6 +129,18 @@ export class ChatRoom extends DurableObject {
  * 游标同步 .one()/toArray() 收完，不跨 await 持有（Pitfall 9）。
  */
   private async handlePublish(request: Request): Promise<Response> {
+    // KEY-05 限流先行（Pattern 5）：按 Send Key 固定窗口计数，先于校验、
+    // seq 分配与落库——被拒消息不消耗 seq、不产生 messages 表写入。
+    // Worker 转发的内部 publish 必带 X-PH-Send-Key；缺失即内部契约违例。
+    const sendKey = request.headers.get(SEND_KEY_HEADER);
+    if (sendKey === null) {
+      return errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
+    }
+    const limited = this.checkRateLimit(sendKey);
+    if (limited !== null) {
+      return limited;
+    }
+
     // 冻结校验器直接吃原始请求体（invalid_json 路径实体化）；
     // 错误码与信封文案与 Worker 层逐字节一致（D-06 单一来源）。
     const validation = validateSendBody(await request.text());
@@ -180,6 +211,54 @@ export class ChatRoom extends DurableObject {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
+  }
+
+  /**
+   * KEY-05 限流：每 Send Key 固定窗口计数（rate_sends 表，Pattern 5 三分支，
+   * 窗口长度与阈值引用 shared 常量——改动只改一处）。
+   *  - 无记录或窗口已过（now - window_start >= RATE_WINDOW_MS）→ 重置计数为 1；
+   *  - 窗口内且 count >= RATE_LIMIT_PER_MIN → 429 rate_limited 信封 +
+   *    Retry-After 头（窗口剩余秒数向上取整，窗口内恒 >= 1）；
+   *  - 窗口内未超 → count+1 放行。
+   * 返回 null 表示放行；同步方法 + 读写间零 await（DO 单线程无竞态）。
+   * 固定窗口边界允许瞬时 2× 突发（Flagged Assumption KEY-05，文档化接受）。
+   */
+  private checkRateLimit(sendKey: string): Response | null {
+    const now = Date.now();
+    const row = this.ctx.storage.sql
+      .exec("SELECT window_start, count FROM rate_sends WHERE send_key = ?1", sendKey)
+      .toArray()[0] as { window_start: number; count: number } | undefined;
+    if (row === undefined || now - row.window_start >= RATE_WINDOW_MS) {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO rate_sends (send_key, window_start, count) VALUES (?1, ?2, 1) " +
+          "ON CONFLICT(send_key) DO UPDATE SET window_start = ?2, count = 1",
+        sendKey, now,
+      );
+      return null;
+    }
+    if (row.count >= RATE_LIMIT_PER_MIN) {
+      const retryAfterSec = Math.ceil((RATE_WINDOW_MS - (now - row.window_start)) / 1000);
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: "rate_limited",
+            message: "Too many requests. Please retry later.",
+          },
+        }),
+        {
+          status: 429,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "Retry-After": String(retryAfterSec),
+          },
+        },
+      );
+    }
+    this.ctx.storage.sql.exec(
+      "UPDATE rate_sends SET count = count + 1 WHERE send_key = ?1",
+      sendKey,
+    );
+    return null;
   }
 
   /** WS 升级：acceptWebSocket（绝不调用标准 accept——烧时长额度，Anti-Pattern #1）。 */
