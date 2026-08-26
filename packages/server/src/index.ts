@@ -28,6 +28,15 @@ const VERIFIED_HEADER = "X-PH-Verified";
 /** Worker→DO 可信内部头：限流分键（KEY-05）用的 Send Key 原值，不外泄响应。 */
 const SEND_KEY_HEADER = "X-PH-Send-Key";
 
+/**
+ * SC4 可观测标记（02-03 Task 3，Rule 3 偏差）：Worker 实际处理的响应一律带
+ * `x-ph-worker: 1`。asset-first 下静态资产命中不触发 Worker，故 /pushhub.js、
+ * /viewer.js、index.html 的响应没有此头——"这条响应是否经 Worker"从此一条
+ * curl 可判（本机 wrangler tail 的 WebSocket 通道被 DNS 污染阻断时的不依赖
+ * 网络的 SC4 证据）。不影响任何冻结契约（错误信封/WS 协议/资产字节）。
+ */
+const WORKER_MARKER_HEADER = "x-ph-worker";
+
 /** D-06 错误信封（唯一实现在 envelope.ts，index/admin 共用）。 */
 const INVALID_KEY = () => errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
 
@@ -93,27 +102,43 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    let response: Response;
     // Admin API（D-12/D-13）：前缀分发，鉴权在 admin.ts 内完成。
     if (pathname.startsWith("/api/admin/")) {
-      return handleAdminApi(request, env);
-    }
-
-    if (pathname === "/api/send" && request.method === "POST") {
-      return handleSend(request, env);
-    }
-
-    const wsMatch = /^\/api\/ws\/([^/]+)$/.exec(pathname);
-    if (wsMatch !== null && request.method === "GET") {
-      // 畸形编码（非法 % 序列）与 KV miss 同路径处理：401 信封（Flagged Assumption SRV-03）。
-      let channelKey: string;
-      try {
-        channelKey = decodeURIComponent(wsMatch[1]);
-      } catch {
-        return INVALID_KEY();
+      response = await handleAdminApi(request, env);
+    } else if (pathname === "/api/send" && request.method === "POST") {
+      response = await handleSend(request, env);
+    } else {
+      const wsMatch = /^\/api\/ws\/([^/]+)$/.exec(pathname);
+      if (wsMatch !== null && request.method === "GET") {
+        // 畸形编码（非法 % 序列）与 KV miss 同路径处理：401 信封（Flagged Assumption SRV-03）。
+        let channelKey: string;
+        try {
+          channelKey = decodeURIComponent(wsMatch[1]);
+        } catch {
+          response = INVALID_KEY();
+          return stampMarker(response);
+        }
+        response = await handleWebSocket(request, env, channelKey);
+      } else {
+        response = errorEnvelope(404, "not_found", "The requested resource was not found.");
       }
-      return handleWebSocket(request, env, channelKey);
     }
-
-    return errorEnvelope(404, "not_found", "The requested resource was not found.");
+    return stampMarker(response);
   },
 };
+
+/** SC4 标记盖章：复制构造新 Response（DO 子请求响应的头不可变，原地 set 会抛
+ * TypeError）；跳过 101 升级响应（WS 握手不参与资产对照）。 */
+function stampMarker(response: Response): Response {
+  if (response.status === 101) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set(WORKER_MARKER_HEADER, "1");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
