@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "invalid_key",
+    "message": "Missing or invalid credentials."
+  },
+  "_meta": {
+    "http_status": 401,
+    "note": "Send Key / Channel Key / Admin Key 缺失或无效（HTTP 401）"
+  }
+}

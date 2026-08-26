@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "message",
+  "wid": "m_2E9fKm3PqR7vXyZa",
+  "seq": 42,
+  "title": "Deploy finished",
+  "text": "# Build OK\n\nAll **3** checks passed. See [run log](https://ci.example.com/runs/8123).",
+  "options": [
+    "Acknowledge",
+    "Retry deploy",
+    "Escalate"
+  ],
+  "callback_url": "https://ci.example.com/hooks/pushhub-callback",
+  "click_url": "https://ci.example.com/runs/8123",
+  "priority": "high",
+  "answered": false,
+  "answered_by": null,
+  "answered_at": null,
+  "answered_content": null,
+  "created_at": 1756185600000
+}

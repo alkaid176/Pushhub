@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "payload_too_large",
+    "message": "Field 'text' exceeds the maximum length of 32768 characters."
+  },
+  "_meta": {
+    "http_status": 413,
+    "note": "D-02 任一上限超限；message 指明超长字段（此例为 text）"
+  }
+}

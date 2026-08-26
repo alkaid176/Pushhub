@@ -1,0 +1,44 @@
+[
+  {
+    "_violation": "missing oldest_kept_seq -> malformed HistoryFrame",
+    "frame": {
+      "v": 1,
+      "type": "history",
+      "messages": [],
+      "has_more": false
+    }
+  },
+  {
+    "_violation": "message element missing v -> malformed MessageFrame",
+    "frame": {
+      "v": 1,
+      "type": "history",
+      "oldest_kept_seq": 1,
+      "has_more": false,
+      "messages": [
+        {
+          "type": "message",
+          "wid": "m_2E9fKm3PqR7vXyZa",
+          "seq": 1,
+          "text": "hi",
+          "priority": "normal",
+          "answered": false,
+          "answered_by": null,
+          "answered_at": null,
+          "answered_content": null,
+          "created_at": 1756185600000
+        }
+      ]
+    }
+  },
+  {
+    "_violation": "has_more is not a boolean -> malformed HistoryFrame",
+    "frame": {
+      "v": 1,
+      "type": "history",
+      "messages": [],
+      "oldest_kept_seq": 1,
+      "has_more": "no"
+    }
+  }
+]

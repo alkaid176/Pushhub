@@ -1,0 +1,14 @@
+[
+  {
+    "v": 1,
+    "type": "error",
+    "code": "invalid_version",
+    "message": "Unsupported protocol version: expected 1."
+  },
+  {
+    "v": 1,
+    "type": "error",
+    "code": "invalid_frame",
+    "message": "Malformed frame: not a recognized v:1 client frame."
+  }
+]

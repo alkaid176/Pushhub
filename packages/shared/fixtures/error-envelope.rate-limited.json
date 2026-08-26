@@ -1,0 +1,13 @@
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "Too many requests. Please retry later."
+  },
+  "_meta": {
+    "http_status": 429,
+    "note": "每 Send Key 每分钟超 RATE_LIMIT_PER_MIN(30) 条（KEY-05）；响应另带 Retry-After 头（秒数到窗口重置）——Retry-After 是 HTTP 响应头而非信封字段",
+    "headers": {
+      "Retry-After": "<seconds-until-window-reset>"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+[
+  {
+    "_violation": "since is negative -> invalid_frame",
+    "frame": {
+      "v": 1,
+      "type": "sync",
+      "since": -1
+    }
+  },
+  {
+    "_violation": "limit is 0 -> invalid_frame",
+    "frame": {
+      "v": 1,
+      "type": "sync",
+      "since": 5,
+      "limit": 0
+    }
+  },
+  {
+    "_violation": "limit exceeds SYNC_LIMIT_MAX (500) -> invalid_frame",
+    "frame": {
+      "v": 1,
+      "type": "sync",
+      "since": 5,
+      "limit": 501
+    }
+  },
+  {
+    "_violation": "v is 2 -> invalid_version",
+    "frame": {
+      "v": 2,
+      "type": "sync",
+      "since": null
+    }
+  },
+  {
+    "_violation": "missing type -> invalid_frame",
+    "frame": {
+      "v": 1,
+      "since": null
+    }
+  }
+]

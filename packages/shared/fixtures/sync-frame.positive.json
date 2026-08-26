@@ -1,0 +1,21 @@
+[
+  {
+    "v": 1,
+    "type": "sync",
+    "since": null,
+    "_note": "首次连接（D-09）：服务端按 INITIAL_FETCH(50) 拉最近消息"
+  },
+  {
+    "v": 1,
+    "type": "sync",
+    "since": 123,
+    "_note": "增量补拉：返回 seq > 123 的消息（D-10/D-11）"
+  },
+  {
+    "v": 1,
+    "type": "sync",
+    "since": 123,
+    "limit": 500,
+    "_note": "带 limit 翻页（D-11）：上限 SYNC_LIMIT_MAX(500)，缺省 SYNC_LIMIT_DEFAULT(200)"
+  }
+]

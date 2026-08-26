@@ -1,0 +1,5 @@
+{
+  "v": 1,
+  "type": "pong",
+  "_note": "服务端 setWebSocketAutoResponse 零唤醒自动回帧；与 server/src/chat-room.ts 的 PONG_FRAME 字面量逐字一致"
+}

@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "invalid_body",
+    "message": "Field 'priority' must be one of: low, normal, high."
+  },
+  "_meta": {
+    "http_status": 400,
+    "note": "结构/类型/枚举违例（此例为 D-04 priority 非三枚举之一）"
+  }
+}
