@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 1
 current_phase_name: 服务端核心与协议冻结
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-08-26T07:23:25.244Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-08-26T09:13:10.095Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 1 execution started
-state_head: 410da2f2802f4e6910d775bb76d9c40ace94bac7
+state_head: 68842cba6b7ba81ca85170d5e11940a9238c5f77
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 1 (服务端核心与协议冻结) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-08-26 — Phase 1 execution started
 
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P01 | 33min | 3 tasks | 18 files |
 | Phase 01 P02 | 20min | 3 tasks | 27 files |
 | Phase 01 P03 | 21min | 2 tasks | 14 files |
+| Phase 01 P04 | 97min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,9 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-02 Task 1 用户裁决 freeze：v1 线协议按 D-01~D-07 原样冻结（one-way 门关闭；fixtures 逐字节基线 6ef00e6，变更即协议事件）
 - [Phase 01]: [Phase 01] 01-03 限流实现落地：ChatRoom DO 内 rate_sends 固定窗口（Pattern 5 三分支），Retry-After 取窗口剩余毫秒向上取整（窗口内恒>=1，规避 59.5s 边界算出 0）；窗口/阈值双双上提 shared 常量单一来源
 - [Phase 01]: [Phase 01] worker-configuration.d.ts 转为全量运行时类型（wrangler types 默认）：server typecheck 零手写 ambient；runInDurableObject 经 cloudflare:test 导入（env/exports 在 cloudflare:workers，实证记录供 01-04 复用）
+- [Phase 01]: [Phase 01] 01-04 Flagged Assumption SRV-05 裁决：limit 越界语义按 01-02 逐字节冻结契约落地（invalid_frame），不做静默钳制——协议 one-way 门优先；clampSyncLimit 仅作 SQL 层纵深防线
+- [Phase 01]: [Phase 01] 01-04 workerd 同 isolate 实证：WS message 事件即发即弃不排队——测试监听必须 attach-before-trigger 且与 accept() 间零 await（connect() 预挂首帧监听模式，供 01-05/Phase 2 复用）
+- [Phase 01]: [Phase 01] 01-04 生产冒烟让位于网络现实：workers.dev SNI 阻断 ~75 分钟（部署 e20626bf 成功，冒烟待补验记入 WINDOWS.md）；独立发现 wrangler dev --remote 不支持 SQLite-backed DO——生产差异验证只能走 workers.dev
 
 ### Pending Todos
 
@@ -87,7 +91,9 @@ None yet.
 
 ### Blockers/Concerns
 
-None yet.
+yet.
+
+- v0.1.3 生产冒烟待补验：本机对 *.workers.dev SNI 阻断 ~75 分钟（部署已成功 e20626bf）——网络恢复后重跑 PH_SMOKE_URL=https://pushhub.snake160220.workers.dev node scripts/smoke.mjs；D-15 ④ dashboard DO duration 人工核对同批完成
 
 ## Deferred Items
 
@@ -99,6 +105,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-26T07:23:25.215Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-08-26T09:13:10.080Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
