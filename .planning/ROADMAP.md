@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 无效或缺失密钥的 /send 请求与 WS 连接被拒绝；单个 Send Key 超过每分钟 30 条限流时收到 429
   5. shared/ 协议包（TS 类型 + golden JSON fixtures，含版本字段）就位，服务端测试对正反例 fixture 全部通过——这是三端移植的契约基线
 
-**Plans**: 1/5 plans executed
+**Plans**: 2/5 plans executed
 Plans:
 **Wave 1**
 
@@ -44,7 +44,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — 协议冻结：shared 完整类型 + validators + golden fixtures 正反例 + 逐字节契约测试
+- [x] 01-02-PLAN.md — 协议冻结：shared 完整类型 + validators + golden fixtures 正反例 + 逐字节契约测试
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -151,7 +151,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 服务端核心与协议冻结 | 1/5 | In Progress|  |
+| 1. 服务端核心与协议冻结 | 2/5 | In Progress|  |
 | 2. Web SDK 参考客户端 | 0/TBD | Not started | - |
 | 3. 管理页与密钥生命周期 | 0/TBD | Not started | - |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |

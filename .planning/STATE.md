@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 1
 current_phase_name: 服务端核心与协议冻结
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-08-26T06:28:26.150Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-08-26T06:55:43.516Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 1 execution started
-state_head: 63a0e968d9088fca8ba2ef4f750aa8defba4231d
+state_head: 2acf2cd1311cf586046f658e3376f2fb6b9a6257
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 1 (服务端核心与协议冻结) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-08-26 — Phase 1 execution started
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 33min | 3 tasks | 18 files |
+| Phase 01 P02 | 20min | 3 tasks | 27 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - [Phase 1]: DO 类经 wrangler.jsonc exports 声明且生产 reconciliation 通过（Created: ChatRoom）——类名 ChatRoom 首版定型，A2 成立
 - [Phase 1]: WebSocketRequestResponsePair 是 workerd 全局构造器，不从 cloudflare:workers 导入（修正研究 Pattern 2 写法）
 - [Phase 1]: workers.dev 从中国大陆网络间歇性不可达（UND_ERR_CONNECT_TIMEOUT），重试即通；已固化进 DEPLOY.md 操作注意
+- [Phase 01]: 01-02 Task 1 用户裁决 freeze：v1 线协议按 D-01~D-07 原样冻结（one-way 门关闭；fixtures 逐字节基线 6ef00e6，变更即协议事件）
 
 ### Pending Todos
 
@@ -94,6 +96,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-26T06:28:26.136Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-08-26T06:55:43.502Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

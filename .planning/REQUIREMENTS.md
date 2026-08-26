@@ -15,7 +15,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **SRV-04**: WebSocket 使用 DO Hibernation API（ctx.acceptWebSocket），空闲连接不计活跃时长
 - [ ] **SRV-05**: 消息持久化到 DO SQLite，每频道维护单调递增 seq；客户端重连/上线时通过 since 游标补拉错过的消息
 - [ ] **SRV-06**: 群聊语义：多个客户端连同一频道，消息互通、成员变更不丢消息
-- [ ] **SRV-07**: 消息协议含版本字段，三端客户端实现不漂移
+- [x] **SRV-07**: 消息协议含版本字段，三端客户端实现不漂移
 
 ### 密钥与安全
 
@@ -116,7 +116,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SRV-04 | Phase 1 | Pending |
 | SRV-05 | Phase 1 | Pending |
 | SRV-06 | Phase 1 | Pending |
-| SRV-07 | Phase 1 | Pending |
+| SRV-07 | Phase 1 | Complete |
 | KEY-01 | Phase 1 | Pending |
 | KEY-05 | Phase 1 | Pending |
 | WEB-01 | Phase 2 | Pending |
