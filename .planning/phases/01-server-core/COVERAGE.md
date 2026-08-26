@@ -1,3 +1,3 @@
 # API Coverage — Phase 01 server-core
 
-No external API integration: Phase 1 builds the first-party PushHub server on Cloudflare Workers runtime (Durable Objects / KV / WebSocket are platform bindings, not third-party services). The `/api/send` endpoint is PushHub's own surface, and "SDK" in scope prose refers to the first-party web client planned for a later phase.
+No external API integration: first-party Cloudflare Workers server; `/api/send` is PushHub's own endpoint, "SDK" refers to the first-party web client in a later phase.
