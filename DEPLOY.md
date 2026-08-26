@@ -36,3 +36,4 @@ PH_SMOKE_URL=https://pushhub.<subdomain>.workers.dev node scripts/smoke.mjs
 | 版本 | 时间 (UTC) | URL | Worker Version ID | 冒烟结果 |
 |------|-----------|-----|-------------------|---------|
 | 0.1.0 | 2026-08-26 | https://pushhub.snake160220.workers.dev | 1104cd81-400a-40fb-85b6-0608f30ebd78 | ✅ SMOKE OK，端到端延迟 285ms（KV ns `ffc9065c998a4567a4a2754ede9eca8b`，ADMIN_KEY secret 落位，ChatRoom DO 经 exports 声明创建） |
+| 0.1.1 | 2026-08-26 | https://pushhub.snake160220.workers.dev | 4c416bed-9f43-4fcf-a9fb-e22c46b3d8d1 | ✅ SMOKE OK，端到端延迟 1119ms（01-02 协议冻结：纯类型/校验层变更，生产回归确认未受损；延迟升高为本机至 workers.dev 网络波动，仍低于 2000ms 验收线） |
