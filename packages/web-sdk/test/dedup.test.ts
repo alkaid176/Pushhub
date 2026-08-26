@@ -64,4 +64,27 @@ describe("SeqDedup（D-17 宿主永见重复）", () => {
     expect(delivered).toBe(20);
     expect(d.last).toBe(100);
   });
+
+  it("窗口裁剪（02-02 增补）：投递到 seq=2000 后 seq<1000 条目被裁剪，窗口内重放判定不受影响", () => {
+    const d = new SeqDedup();
+    for (let seq = 1; seq <= 2000; seq++) expect(d.shouldDeliver(seq)).toBe(true);
+    // 裁剪证据：内存条目数有界（<1000 的旧条目已不在 Set——lastSeq-floor 之外全清）。
+    expect(d.size).toBeLessThanOrEqual(DEDUP_WINDOW + 1);
+    expect(d.last).toBe(2000);
+    // 窗口内（>= lastSeq - DEDUP_WINDOW）重放仍被拦截——裁剪不影响近期去重。
+    expect(d.shouldDeliver(1000)).toBe(false);
+    expect(d.shouldDeliver(1500)).toBe(false);
+    expect(d.shouldDeliver(2000)).toBe(false);
+    // 前向投递不受影响。
+    expect(d.shouldDeliver(2001)).toBe(true);
+    expect(d.last).toBe(2001);
+  });
+
+  it("窗口外语义（02-02 增补）：超窗旧 seq 视为未见——服务端保留窗口 500 使该重放不可达（文档化取舍）", () => {
+    const d = new SeqDedup();
+    for (let seq = 1; seq <= 2000; seq++) expect(d.shouldDeliver(seq)).toBe(true);
+    // seq 999 已被裁剪出窗口：再见到视为未见（服务端 RETENTION_KEEP=500 +
+    // 首拉 50 的交叠上界 ~550 << 窗口 1000，合规服务端不可能重放如此旧的 seq）。
+    expect(d.shouldDeliver(999)).toBe(true);
+  });
 });
