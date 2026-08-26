@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "test": "vitest run --max-workers=1 --no-isolate",
-    "cf-typegen": "wrangler types --include-runtime=false",
+    "cf-typegen": "wrangler types",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@pushhub/shared": "workspace:*"

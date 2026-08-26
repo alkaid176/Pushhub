@@ -1,9 +1,10 @@
 /**
  * ChatRoom —— 每频道一个实例的扇出中心（Durable Object，SQLite-backed）。
  *
- * 职责（01-01 切片）：
- *  - publish 内部请求：seq 分配（显式 COALESCE(MAX)+1，禁 AUTOINCREMENT）+ SQLite 落库
- *    + v:1 message 帧全连接扇出
+ * 职责（01-01 切片 + 01-03 发送侧完整化）：
+ *  - publish 内部请求：冻结校验器纵深防御 → seq 分配（显式 COALESCE(MAX)+1，
+ *    禁 AUTOINCREMENT）→ 全字段 SQLite 落库（options 序列化 JSON 字符串、
+ *    空省存 NULL）→ 冻结 MessageFrame 全连接扇出
  *  - WS 升级：Hibernation API 三件套（acceptWebSocket / serializeAttachment /
  *    setWebSocketAutoResponse）——空闲不计时长（SRV-04）
  *
@@ -14,7 +15,14 @@
  * DO 只经 binding 可达，内部头是双重防线。
  */
 import { DurableObject } from "cloudflare:workers";
-import { PROTOCOL_VERSION, type MessageFrame, type Priority } from "@pushhub/shared";
+import {
+  PROTOCOL_VERSION,
+  WID_LENGTH,
+  WID_PREFIX,
+  type MessageFrame,
+  type Priority,
+} from "@pushhub/shared";
+import { validateSendBody, type NormalizedSendBody } from "@pushhub/shared/validators";
 
 // ---- WS 帧字面量（D-07：全帧带版本；两串各远小于 2048 字符上限）----
 // 客户端应用层心跳：发 PING_FRAME 原文即被 setWebSocketAutoResponse 零唤醒自动回应。
@@ -42,14 +50,14 @@ const CREATE_MESSAGES_DDL = `
   )
 `;
 
-// ---- wid 生成（D-05）：m_ + 16 字符，URL-safe 字母表去易混淆字符，不引外部 ID 库 ----
+// ---- wid 生成（D-05）：前缀 + 长度引用 shared 常量（阈值单一来源），
+// URL-safe 字母表去易混淆字符，不引外部 ID 库。----
 const WID_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz";
-const WID_LENGTH = 16;
 
 function generateWid(): string {
   const bytes = new Uint8Array(WID_LENGTH);
   crypto.getRandomValues(bytes);
-  let wid = "m_";
+  let wid = WID_PREFIX;
   for (let i = 0; i < WID_LENGTH; i++) {
     wid += WID_ALPHABET[bytes[i] % WID_ALPHABET.length];
   }
@@ -63,24 +71,6 @@ function errorEnvelope(status: number, code: string, message: string): Response 
     headers: { "content-type": "application/json; charset=utf-8" },
   });
 }
-
-/** publish 请求载荷（本切片仅做最小结构检查；D-02/D-04 完整校验在 01-03 接入）。 */
-interface PublishPayload {
-  title?: string;
-  text: string;
-  options?: string[];
-  callback_url?: string;
-  click_url?: string;
-  priority?: Priority;
-}
-
-/** v:1 message 帧（D-03：answered 字段集随首帧一次定全；完整类型 01-02 冻结）。 */
-type MessageFrameFull = MessageFrame & {
-  answered: boolean;
-  answered_by: string | null;
-  answered_at: number | null;
-  answered_content: string | null;
-};
 
 export class ChatRoom extends DurableObject {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -113,33 +103,28 @@ export class ChatRoom extends DurableObject {
   }
 
   /**
-   * publish：同步块内取 seq -> 显式 INSERT -> 全连接扇出 -> 返回 {id, seq}。
+   * publish：校验（纵深防御——Worker 层已拒非法载荷，DO 内复跑同一冻结校验器
+   *   保证任何到达此处的请求体仍满足 D-02/D-04 契约）→ 同步块内取 seq →
+   *   显式 INSERT 全字段落库 → 全连接扇出冻结 MessageFrame → 返回 {id, seq}。
    * 两句 exec 之间零 await = 自动原子提交（Pattern 3）；
-   * 游标同步 .one() 收完，不跨 await 持有（Pitfall 9）。
-   */
+ * 游标同步 .one()/toArray() 收完，不跨 await 持有（Pitfall 9）。
+ */
   private async handlePublish(request: Request): Promise<Response> {
-    // 最小结构检查（完整 D-02/D-04 校验在 01-03 于 Worker 层接入）。
-    let payload: PublishPayload;
-    try {
-      payload = (await request.json()) as PublishPayload;
-    } catch {
-      return errorEnvelope(400, "invalid_request", "Request body must be valid JSON.");
+    // 冻结校验器直接吃原始请求体（invalid_json 路径实体化）；
+    // 错误码与信封文案与 Worker 层逐字节一致（D-06 单一来源）。
+    const validation = validateSendBody(await request.text());
+    if (!validation.ok) {
+      return errorEnvelope(validation.status, validation.code, validation.message);
     }
-    if (payload === null || typeof payload !== "object"
-      || typeof payload.text !== "string" || payload.text.length === 0) {
-      return errorEnvelope(400, "invalid_request", "Missing required field: text.");
-    }
+    const payload: NormalizedSendBody = validation.normalized;
 
-    const title = typeof payload.title === "string" ? payload.title : null;
-    const optionsJson = Array.isArray(payload.options)
+    const title = payload.title ?? null;
+    const optionsJson = payload.options !== undefined
       ? JSON.stringify(payload.options)
       : null;
-    const callbackUrl = typeof payload.callback_url === "string" ? payload.callback_url : null;
-    const clickUrl = typeof payload.click_url === "string" ? payload.click_url : null;
-    const priority: Priority =
-      payload.priority === "low" || payload.priority === "high"
-        ? payload.priority
-        : "normal";
+    const callbackUrl = payload.callback_url ?? null;
+    const clickUrl = payload.click_url ?? null;
+    const priority: Priority = payload.priority;
 
     const wid = generateWid();
     const createdAt = Date.now();
@@ -155,19 +140,26 @@ export class ChatRoom extends DurableObject {
       seq, wid, title, payload.text, optionsJson, callbackUrl, clickUrl, priority, createdAt,
     );
 
-    // v:1 message 帧：D-03 answered 字段集一次定全（本期恒初始值）。
-    // 服务端是哑管道：text 存储与扇出逐字保持原文，不解析不改写（Prohibition #1）。
-    const frame: MessageFrameFull = {
+    // 冻结 MessageFrame（01-02 全量类型）：D-03 answered 字段集随首帧一次定全
+    // （本期恒初始值）；可选字段省略语义——未提供时键不出现（永不为空数组）。
+    // 服务端是哑管道：text/options/两 URL 存储与扇出逐字保持原文，
+    // 不解析 Markdown、不消费 URL（SRV-02 Prohibitions）。
+    const frame: MessageFrame = {
       v: PROTOCOL_VERSION,
+      type: "message",
       wid,
       seq,
       ...(title !== null ? { title } : {}),
       text: payload.text,
+      ...(payload.options !== undefined ? { options: payload.options } : {}),
+      ...(callbackUrl !== null ? { callback_url: callbackUrl } : {}),
+      ...(clickUrl !== null ? { click_url: clickUrl } : {}),
       priority,
       answered: false,
       answered_by: null,
       answered_at: null,
       answered_content: null,
+      created_at: createdAt,
     };
     const frameJson = JSON.stringify(frame);
 
