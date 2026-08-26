@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 2
 current_phase_name: Web SDK 参考客户端
 status: executing
-stopped_at: Completed 02-01-PLAN.md (web-sdk tracer)
-last_updated: "2026-08-26T15:19:42.456Z"
+stopped_at: Completed 02-02-PLAN.md (reconnect resilience)
+last_updated: "2026-08-26T16:29:55.815Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 2 execution started
-state_head: f3d6b3bc5b1fb895e99c48846311a285be5460a0
+state_head: b995bb5452dc7fbb56dcb54d7678c24fc0d11765
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 2 (Web SDK 参考客户端) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-08-26 — Phase 2 execution started
 
@@ -64,6 +64,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 01 P04 | 97min | 3 tasks | 11 files |
 | Phase 01 P05 | 13min | 2 tasks | 10 files |
 | Phase 02 P01 | 55min | 4 tasks | 19 files |
+| Phase 02 P02 | 64min | 3 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,9 @@ Recent decisions affecting current work:
 - [Phase 2]: [Phase 02] 02-01 Task 2 SDK API 表面定稿（approve-recommended）：status 枚举 connecting/online/reconnecting/offline；error 载荷 {message,code?,fatal?}；不增补 off——one-way 契约进入产物
 - [Phase 2]: [Phase 02] 02-01 A1 spike：Chromium setOffline(true) 不关闭已建立 WS——02-02 断连混沌需改用调试句柄/CDP；重连补拉基准取连接前游标（syncBase 快照）保中段缺口零丢失
 - [Phase 2]: [Phase 02] 02-01 pushhub.js 生产分发就绪：0.1.5 部署（Version 644fadce）+ SC4 字节级验证（78,750 bytes min / 26,711 gzip）；deploy 链式先 build 后 deploy；本轮冒烟同时补验 0.1.3/0.1.4 积欠
+- [Phase 2]: [Phase 02] 02-02 连接生命周期固化为纯状态机 connection-machine（createMachine 输入事件流→输出动作流，零平台依赖）+ pushhub 薄 adapter——Phase 5 Tauri 移植同构参考；full jitter cap 60s / 心跳 30s / pong 死线 10s / 探活死线 5s / SYNC_PAGE_MAX=100 全部常量固化
+- [Phase 2]: [Phase 02] 02-02 E2E 断连手段定稿（spike 消费）：页面包装 WebSocket 构造器捕获底层 socket + close(1000, reason)——实证无参 close() 在 wrangler dev 代理层下握手卡 CLOSING（onclose 永不触发）；退避窗口确定性经页面 Math.random=0.99 注入（机器缺省随机源属性查找）
+- [Phase 2]: [Phase 02] 02-02 部署 0.1.6（Version 936e5e7f）：SMOKE OK 368ms + /pushhub.js 81,022 字节逐字节一致；WINDOWS.md #4 浏览器层重连验证欠账关闭（三断连形态 E2E 全绿）
 
 ### Pending Todos
 
@@ -114,6 +118,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-26T15:19:42.157Z
-Stopped at: Completed 02-01-PLAN.md (web-sdk tracer)
+Last session: 2026-08-26T16:29:55.685Z
+Stopped at: Completed 02-02-PLAN.md (reconnect resilience)
 Resume file: None
