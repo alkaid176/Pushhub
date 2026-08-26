@@ -161,8 +161,11 @@ async function pinBackoff(page: Page): Promise<void> {
  */
 async function closeLiveSocket(page: Page): Promise<void> {
   const closed = await page.evaluate(() => {
-    const sockets = (window as unknown as { __sockets: { readyState: number; close(): void }[] })
-      .__sockets;
+    const sockets = (
+      window as unknown as {
+        __sockets: { readyState: number; close(code?: number, reason?: string): void }[];
+      }
+    ).__sockets;
     const live = sockets.filter((s) => s.readyState === 1);
     if (live.length === 0) return false;
     live[live.length - 1].close(1000, "e2e unexpected disconnect");
