@@ -37,3 +37,4 @@ PH_SMOKE_URL=https://pushhub.<subdomain>.workers.dev node scripts/smoke.mjs
 |------|-----------|-----|-------------------|---------|
 | 0.1.0 | 2026-08-26 | https://pushhub.snake160220.workers.dev | 1104cd81-400a-40fb-85b6-0608f30ebd78 | ✅ SMOKE OK，端到端延迟 285ms（KV ns `ffc9065c998a4567a4a2754ede9eca8b`，ADMIN_KEY secret 落位，ChatRoom DO 经 exports 声明创建） |
 | 0.1.1 | 2026-08-26 | https://pushhub.snake160220.workers.dev | 4c416bed-9f43-4fcf-a9fb-e22c46b3d8d1 | ✅ SMOKE OK，端到端延迟 1119ms（01-02 协议冻结：纯类型/校验层变更，生产回归确认未受损；延迟升高为本机至 workers.dev 网络波动，仍低于 2000ms 验收线） |
+| 0.1.2 | 2026-08-26 | https://pushhub.snake160220.workers.dev | a937b5b4-679f-429c-ba04-e8f42f1c242d | ✅ SMOKE OK，端到端延迟 277ms（01-03 发送侧完整化：/api/send 校验链接入 + SRV-02 全字段透传 + KEY-05 限流；冒烟新增超限反例步——32769 字符 text → 413 payload_too_large 边缘即拒；429/Retry-After 生产路径由本地真实 workerd 测试覆盖，生产按低打扰口径仅验 200/401/413 三态） |
