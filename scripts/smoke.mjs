@@ -1,69 +1,46 @@
 #!/usr/bin/env node
 /**
- * PushHub 生产冒烟脚本（D-15 checklist ①②③ 自动化部分完整版）—— 01-04 Task 3。
+ * PushHub 生产冒烟脚本（D-15 checklist ①②③④ 自动化部分——01-05 定稿版）。
  *
- * 零依赖：Node 22 原生 fetch + 全局 WebSocket + child_process。
+ * 零依赖：Node 22 原生 fetch + 全局 WebSocket。
  * （Node API 仅用于本脚本与服务端代码无关——服务端零 Node 依赖约束不受影响。）
  *
  * 用法：
- *   node scripts/smoke.mjs --url https://pushhub.<subdomain>.workers.dev
- *   PH_SMOKE_URL=https://... node scripts/smoke.mjs
+ *   PH_SMOKE_URL=https://... PH_ADMIN_KEY=<secret> node scripts/smoke.mjs
+ *   node scripts/smoke.mjs --url https://pushhub.<subdomain>.workers.dev --admin-key <secret>
  *
- * 流程：
- *   a. 经 npx wrangler kv key put 种入冒烟用 ch:/sk: 两键（固定 channelId "smoketest"，
- *      可重复运行：覆盖式种入；KV namespace id 自行从 packages/server/wrangler.jsonc 解析）
- *   b. POST /api/send（Bearer 冒烟 Send Key）断言 200 且响应含 id 与 seq
- *   c. WS 全链路（D-15 ②③）：
- *      c1 打开 WS /api/ws/<channelKey> —— 01-04 起 accept 后立即收首拉 history 帧
- *         （最近 50 条，D-09），断言形态与 oldest_kept_seq
- *      c2 再发第二条消息，断言收到 v:1 message 帧且 text 一致，打印端到端延迟
- *      c3 记录 last_seq 后主动断开
- *      c4 断开期间经 /api/send 再发 2 条
- *      c5 重连 + 发送 {"v":1,"type":"sync","since":last_seq}，断言恰补 2 条且
- *         seq 连续（断线补拉零丢失的生产证据）
- *   d. 断言无效 Send Key 得 401 + code: invalid_key 信封
- *   e. 断言超限载荷（text 32769 字符）得 413 + code: payload_too_large（D-02 契约）
- *   f. 全部通过输出 SMOKE OK；任何一步失败非零退出
+ * 流程（生产路径全真实——建频道走 admin API，不再经 wrangler kv 种键）：
+ *   ① POST /api/admin/channels（Bearer ADMIN_KEY）建临时冒烟频道拿三件套
+ *      （频道名含时间戳，可重复运行不冲突）；先以错误 Admin Key 断言 401
+ *      （D-13 生产路径反例）
+ *   ② POST /api/send（返回的 Send Key）断言 200 且响应含 id 与 seq；
+ *      WS 全链路实收 v:1 message 帧并打印端到端延迟毫秒（验收 < 2000ms）
+ *      （首连即收首拉 history 帧，D-09）
+ *   ③ 记录 last_seq 后断开 → 断开期间再发 2 条 → 重连 + sync since 补拉
+ *      恰补 2 条且 seq 连续（断线补拉零丢失零重复）
+ *   ④ 反例两枚：无效 Send Key → 401 invalid_key；超限载荷（text 32769 字符）
+ *      → 413 payload_too_large（D-02 契约）
+ *   全部通过输出 SMOKE OK；任何一步失败非零退出
  */
-import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SERVER_DIR = join(HERE, "..", "packages", "server");
-
-// ---- 参数：--url <worker-url> 或 PH_SMOKE_URL ----
 const args = process.argv.slice(2);
 let baseUrl = process.env.PH_SMOKE_URL ?? "";
+let adminKey = process.env.PH_ADMIN_KEY ?? "";
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--url" && args[i + 1]) {
     baseUrl = args[i + 1];
     i++;
+  } else if (args[i] === "--admin-key" && args[i + 1]) {
+    adminKey = args[i + 1];
+    i++;
   }
 }
-if (!baseUrl) {
-  console.error("usage: node scripts/smoke.mjs --url <worker-url>  (or set PH_SMOKE_URL)");
+if (!baseUrl || !adminKey) {
+  console.error("usage: PH_SMOKE_URL=<url> PH_ADMIN_KEY=<secret> node scripts/smoke.mjs  (or --url/--admin-key)");
   process.exit(2);
 }
 baseUrl = baseUrl.replace(/\/+$/, "");
 const wsOrigin = baseUrl.replace(/^http/, "ws");
 
-// ---- 从 wrangler.jsonc 解析 KV namespace id（剔除 // 行注释后正则取 kv_namespaces.id）----
-const wranglerRaw = readFileSync(join(SERVER_DIR, "wrangler.jsonc"), "utf8");
-const wranglerStripped = wranglerRaw.replace(/^[ \t]*\/\/.*$/gm, "");
-const kvMatch = /"kv_namespaces"\s*:\s*\[[\s\S]*?"id"\s*:\s*"([0-9a-f]+)"/.exec(wranglerStripped);
-if (!kvMatch) {
-  console.error("FAIL: cannot parse kv_namespaces id from packages/server/wrangler.jsonc");
-  process.exit(2);
-}
-const NAMESPACE_ID = kvMatch[1];
-
-// ---- 冒烟固定频道与密钥 ----
-const CHANNEL_ID = "smoketest";
-const CHANNEL_KEY = "ph_smoke_channel_v1";
-const SEND_KEY = "ph_smoke_send_v1";
 const TEXT_2 = "## second message\n\nsmoke **fanout** check";
 
 function fail(step, detail) {
@@ -71,42 +48,47 @@ function fail(step, detail) {
   process.exit(1);
 }
 
-// ---- a. 种入 ch:/sk: 两键（值经临时文件 --path 传入，规避跨 shell 引号问题）----
-function kvPut(key, value) {
-  const tmp = join(mkdtempSync(join(tmpdir(), "ph-smoke-")), "value.json");
-  try {
-    writeFileSync(tmp, JSON.stringify(value));
-    execFileSync(
-      "npx",
-      [
-        "wrangler", "kv", "key", "put", key,
-        `--path=${tmp}`,
-        `--namespace-id=${NAMESPACE_ID}`,
-        "--remote",
-      ],
-      { cwd: SERVER_DIR, stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, shell: true },
-    );
-  } catch (err) {
-    fail("kv-seed", `wrangler kv key put ${key} failed: ${err.stderr?.toString() ?? err.message}`);
-  } finally {
-    rmSync(dirname(tmp), { recursive: true, force: true });
-  }
-}
-
-kvPut(`ch:${CHANNEL_KEY}`, { channelId: CHANNEL_ID, name: "smoke", createdAt: Date.now() });
-kvPut(`sk:${SEND_KEY}`, { channelId: CHANNEL_ID });
-console.log(`OK [kv-seed]: ch:${CHANNEL_KEY} + sk:${SEND_KEY} -> channelId "${CHANNEL_ID}" (ns ${NAMESPACE_ID})`);
-
-// ---- b. 第一条消息：POST /api/send 断言 200 且含 id 与 seq ----
 async function send(text, bearer) {
-  const resp = await fetch(`${baseUrl}/api/send`, {
+  return fetch(`${baseUrl}/api/send`, {
     method: "POST",
     headers: { Authorization: `Bearer ${bearer}`, "content-type": "application/json" },
     body: JSON.stringify({ title: "smoke", text }),
   });
-  return resp;
 }
 
+/** ① 建频道：错误 Admin Key 先验 401（D-13 生产反例），再真实建临时频道。 */
+async function createChannel() {
+  const bad = await fetch(`${baseUrl}/api/admin/channels`, {
+    method: "POST",
+    headers: { Authorization: "Bearer definitely-not-the-admin-key", "content-type": "application/json" },
+    body: JSON.stringify({ name: "smoke-negative" }),
+  });
+  if (bad.status !== 401) fail("admin-auth", `wrong admin key: expected 401, got ${bad.status}: ${await bad.text()}`);
+  const badBody = await bad.json();
+  if (badBody?.error?.code !== "invalid_key") fail("admin-auth", `bad envelope: ${JSON.stringify(badBody)}`);
+  console.log("OK [admin-auth]: wrong admin key -> 401 + error.code=invalid_key");
+
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+  const name = `smoke-${stamp}`;
+  const resp = await fetch(`${baseUrl}/api/admin/channels`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${adminKey}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (resp.status !== 201) fail("admin-create", `expected 201, got ${resp.status}: ${await resp.text()}`);
+  const channel = await resp.json();
+  if (!/^phc_[0-9A-Za-z]{32}$/.test(channel.channelKey)) fail("admin-create", `bad channelKey: ${JSON.stringify(channel.channelKey)}`);
+  if (!/^phs_[0-9A-Za-z]{32}$/.test(channel.sendKey)) fail("admin-create", `bad sendKey: ${JSON.stringify(channel.sendKey)}`);
+  if (!/^[0-9A-Za-z]{16}$/.test(channel.channelId)) fail("admin-create", `bad channelId: ${JSON.stringify(channel.channelId)}`);
+  console.log(`OK [admin-create]: channel "${name}" (id ${channel.channelId}) -> phc_/phs_ keys minted`);
+  return channel;
+}
+
+const channel = await createChannel();
+const CHANNEL_KEY = channel.channelKey;
+const SEND_KEY = channel.sendKey;
+
+// ---- ② 第一条消息：POST /api/send 断言 200 且含 id 与 seq ----
 let resp1;
 try {
   resp1 = await send("# hello smoke", SEND_KEY);
@@ -117,13 +99,13 @@ if (resp1.status !== 200) fail("send-1", `expected 200, got ${resp1.status}: ${a
 const body1 = await resp1.json();
 if (typeof body1.id !== "string" || !body1.id.startsWith("m_")) fail("send-1", `bad id: ${JSON.stringify(body1)}`);
 if (typeof body1.seq !== "number" || body1.seq < 1) fail("send-1", `bad seq: ${JSON.stringify(body1)}`);
-console.log(`OK [send-1]: 200 id=${body1.id} seq=${body1.seq}`);
+console.log(`OK [send-1]: 200 id=${body1.id} seq=${body1.seq} (admin-created Send Key works immediately)`);
 
-// ---- c. WS 全链路（D-15 ②③）----
+// ---- WS 全链路（D-15 ②③）----
 // 连接方式：open 前预挂 message 监听，帧按序入数组（服务端在升级路径即推送
 // 首拉 history 帧——open 回调后再挂监听会丢即发即弃的首帧）。
 
-// c1. 首连：立即收首拉 history 帧（D-09，01-04 起 accept 后服务端即刻推送）。
+// 首连：立即收首拉 history 帧（D-09，01-04 起 accept 后服务端即刻推送）。
 const frames1 = [];
 const socket = new WebSocket(`${wsOrigin}/api/ws/${CHANNEL_KEY}`);
 socket.addEventListener("message", (ev) => {
@@ -134,7 +116,7 @@ await new Promise((resolve, reject) => {
   socket.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
   socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("WS error/open failed")); }, { once: true });
 }).catch((err) => fail("ws-open", err.message));
-console.log("OK [ws-open]: connected");
+console.log("OK [ws-open]: connected (admin-created Channel Key works immediately)");
 
 const initialDeadline = Date.now() + 10_000;
 while (frames1.length === 0) {
@@ -149,7 +131,7 @@ if (initialFrame.messages.length > 50) fail("ws-initial-history", `INITIAL_FETCH
 if (typeof initialFrame.oldest_kept_seq !== "number") fail("ws-initial-history", `bad oldest_kept_seq: ${JSON.stringify(initialFrame).slice(0, 200)}`);
 console.log(`OK [ws-initial-history]: ${initialFrame.messages.length} messages, oldest_kept_seq=${initialFrame.oldest_kept_seq}, has_more=${initialFrame.has_more}`);
 
-// c2. 第二条消息：实收 v:1 message 帧 + 端到端延迟（帧已由预挂监听按序收集）。
+// 第二条消息：实收 v:1 message 帧 + 端到端延迟（帧已由预挂监听按序收集）。
 const t0 = Date.now();
 const resp2 = await send(TEXT_2, SEND_KEY);
 if (resp2.status !== 200) fail("send-2", `expected 200, got ${resp2.status}: ${await resp2.text()}`);
@@ -170,12 +152,12 @@ console.log(`OK [ws-receive]: v:1 frame seq=${frame.seq} wid=${frame.wid} text v
 console.log(`LATENCY: ${latencyMs}ms (webhook POST -> WS client receipt)`);
 if (latencyMs >= 2000) fail("ws-receive", `end-to-end latency ${latencyMs}ms >= 2000ms (acceptance #1)`);
 
-// c3. 记录 last_seq 并主动断开（D-15 ③ 演练起点）。
+// ---- ③ 记录 last_seq 并主动断开（D-15 ③ 演练起点）----
 const lastSeq = body2.seq;
 socket.close(1000, "smoke disconnect");
 console.log(`OK [ws-disconnect]: closed with last_seq=${lastSeq}`);
 
-// c4. 断开期间再发 2 条。
+// 断开期间再发 2 条。
 const resp3 = await send("offline message #1", SEND_KEY);
 if (resp3.status !== 200) fail("offline-send", `expected 200, got ${resp3.status}: ${await resp3.text()}`);
 const body3 = await resp3.json();
@@ -185,7 +167,7 @@ const body4 = await resp4.json();
 if (body4.seq !== body3.seq + 1) fail("offline-send", `seq not contiguous: ${body3.seq} -> ${body4.seq}`);
 console.log(`OK [offline-send]: 2 messages while disconnected (seq ${body3.seq}, ${body4.seq})`);
 
-// c5. 重连 → 首拉 history → sync since=lastSeq 恰补 2 条（断线补拉零丢失）。
+// 重连 → 首拉 history → sync since=lastSeq 恰补 2 条（断线补拉零丢失）。
 const frames2 = [];
 const socket2 = new WebSocket(`${wsOrigin}/api/ws/${CHANNEL_KEY}`);
 socket2.addEventListener("message", (ev) => {
@@ -228,14 +210,14 @@ if (caught.messages[0].text !== "offline message #1" || caught.messages[1].text 
 console.log(`OK [ws-catchup]: sync since=${lastSeq} -> exactly 2 messages (seq ${caughtSeqs.join(",")}), zero loss zero dup`);
 socket2.close(1000, "smoke done");
 
-// ---- d. 无效 Send Key -> 401 + invalid_key 信封 ----
+// ---- ④ 反例两枚：无效 Send Key 401 + 超限载荷 413 ----
 const respBad = await send("# should fail", `invalid_${Date.now()}`);
 if (respBad.status !== 401) fail("invalid-key", `expected 401, got ${respBad.status}`);
 const errBody = await respBad.json();
 if (errBody?.error?.code !== "invalid_key") fail("invalid-key", `bad envelope: ${JSON.stringify(errBody)}`);
 console.log("OK [invalid-key]: 401 + error.code=invalid_key");
 
-// ---- e. 超限载荷 -> 413 + payload_too_large（text 32769 字符，D-02 上限 32768）----
+// 超限载荷（text 32769 字符，D-02 上限 32768）。
 const oversizedText = "a".repeat(32769);
 let respBig;
 try {
@@ -256,5 +238,5 @@ if (bigBody?.error?.code !== "payload_too_large") {
 }
 console.log("OK [oversized]: 413 + error.code=payload_too_large (32769-char text rejected at edge)");
 
-// ---- f. 全绿 ----
+// ---- 全绿 ----
 console.log("SMOKE OK");
