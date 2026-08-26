@@ -9,8 +9,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 服务端核心
 
-- [ ] **SRV-01**: 外部系统可通过 POST /send 发送通知（Send Key 鉴权），载荷含 title、body（Markdown）、可选 priority 标签
-- [ ] **SRV-02**: 消息载荷可附带快捷回复选项（string[]，上限 4 个）与 callback_url，随消息分发到客户端
+- [x] **SRV-01**: 外部系统可通过 POST /send 发送通知（Send Key 鉴权），载荷含 title、body（Markdown）、可选 priority 标签
+- [x] **SRV-02**: 消息载荷可附带快捷回复选项（string[]，上限 4 个）与 callback_url，随消息分发到客户端
 - [x] **SRV-03**: 客户端可通过 WebSocket 连接频道（Channel Key 鉴权），同频道新消息实时扇出到所有在线连接
 - [ ] **SRV-04**: WebSocket 使用 DO Hibernation API（ctx.acceptWebSocket），空闲连接不计活跃时长
 - [ ] **SRV-05**: 消息持久化到 DO SQLite，每频道维护单调递增 seq；客户端重连/上线时通过 since 游标补拉错过的消息
@@ -23,7 +23,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **KEY-02**: Web 管理页（Admin Key 登录）可创建/删除/重置频道及其密钥
 - [ ] **KEY-03**: 每频道可创建多个 Send Key，可单独吊销——不同脚本/系统用不同 Key，泄露不互伤
 - [ ] **KEY-04**: 任一级密钥可单独重置，重置后旧密钥立即失效（Channel Key 重置不丢失频道历史）
-- [ ] **KEY-05**: 每 Send Key 每分钟限发 30 条（可配置），超限返回 429
+- [x] **KEY-05**: 每 Send Key 每分钟限发 30 条（可配置），超限返回 429
 - [ ] **KEY-06**: 回调请求带 PushHub-Message-Id 与签名头，发送方可验签防伪造回调
 
 ### 双向通信
@@ -110,15 +110,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SRV-01 | Phase 1 | Pending |
-| SRV-02 | Phase 1 | Pending |
+| SRV-01 | Phase 1 | Complete |
+| SRV-02 | Phase 1 | Complete |
 | SRV-03 | Phase 1 | Complete |
 | SRV-04 | Phase 1 | Pending |
 | SRV-05 | Phase 1 | Pending |
 | SRV-06 | Phase 1 | Pending |
 | SRV-07 | Phase 1 | Complete |
 | KEY-01 | Phase 1 | Pending |
-| KEY-05 | Phase 1 | Pending |
+| KEY-05 | Phase 1 | Complete |
 | WEB-01 | Phase 2 | Pending |
 | WEB-02 | Phase 2 | Pending |
 | WEB-04 | Phase 2 | Pending |
