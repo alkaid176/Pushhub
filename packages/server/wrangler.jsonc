@@ -2,7 +2,7 @@
 // - exports 声明 ChatRoom DO 类（sqlite-backed，Free 计划强制 sqlite）。
 //   注意：exports 与 migrations 数组互斥且一旦部署不可回退（Pitfall 2）——
 //   ChatRoom 类名首版部署即定型，不可改名。
-// - kv_namespaces.id 为占位符，真实 namespace id 在首次部署时创建并回填（01-01 Task 3）。
+// - kv_namespaces.id 为真实 namespace id（2026-08-26 创建，01-01 Task 3 回填）。
 {
   "name": "pushhub",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "local-placeholder"
+      "id": "ffc9065c998a4567a4a2754ede9eca8b"
     }
   ],
 
