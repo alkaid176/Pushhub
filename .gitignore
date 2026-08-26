@@ -16,3 +16,6 @@ packages/server/public/pushhub.js
 
 # vitest temporary
 .vitest/
+
+# Playwright E2E 运行产物
+packages/web-sdk/test-results/

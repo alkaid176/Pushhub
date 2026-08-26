@@ -131,7 +131,9 @@ function statusOf(state: MachineState): PushHubStatus {
  * 排队消化，机器自身无并发。
  */
 export function createMachine(options: MachineOptions = {}): ConnectionMachine {
-  const random = options.random ?? Math.random;
+  // 缺省经属性查找取 Math.random（而非构造时捕获函数引用）——宿主页面
+  // 可替换 Math.random（如 E2E 注入确定退避窗口）；语义与直接引用等价。
+  const random = options.random ?? ((): number => Math.random());
   const dedup = new SeqDedup();
 
   let state: MachineState = "idle";
