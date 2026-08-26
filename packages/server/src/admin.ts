@@ -41,11 +41,14 @@ function checkAdminAuth(request: Request, env: Env): Response | null {
     return INVALID_KEY();
   }
   const provided = auth.slice("Bearer ".length);
-  if (provided.length !== expected.length) {
-    return INVALID_KEY();
-  }
+  // 长度前置按 UTF-8 字节数（CR-01）：与 timingSafeEqual 的比较口径一致。
+  // 若按 UTF-16 码元长度比较，等码元长度的非 ASCII Bearer 会绕过前置分支，
+  // 使 timingSafeEqual 因字节长度不等抛未捕获异常 -> 500（违反"一律 401"）。
   const a = new TextEncoder().encode(provided);
   const b = new TextEncoder().encode(expected);
+  if (a.length !== b.length) {
+    return INVALID_KEY();
+  }
   if (!crypto.subtle.timingSafeEqual(a, b)) {
     return INVALID_KEY();
   }

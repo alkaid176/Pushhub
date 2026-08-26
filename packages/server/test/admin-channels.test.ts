@@ -117,6 +117,13 @@ describe("Admin API 鉴权（D-13）", () => {
     // 前缀正确但长度不同：两段式比较的长度前置分支（不进 timingSafeEqual）。
     await expectErrorEnvelope(await adminRequest("GET", undefined, TEST_ADMIN_KEY.slice(0, 10)), 401, "invalid_key");
     await expectErrorEnvelope(await adminRequest("GET", undefined, TEST_ADMIN_KEY + "xx"), 401, "invalid_key");
+    // CR-01：等码元长度的非 ASCII Bearer——字节长度前置分支必须 401，
+    // 不得让 timingSafeEqual 因字节长度不等抛未捕获异常返回 500。
+    await expectErrorEnvelope(
+      await adminRequest("GET", undefined, "密".repeat(TEST_ADMIN_KEY.length)),
+      401,
+      "invalid_key",
+    );
     // 非 Bearer 方案同样拒绝。
     await expectErrorEnvelope(
       await exports.default.fetch(
