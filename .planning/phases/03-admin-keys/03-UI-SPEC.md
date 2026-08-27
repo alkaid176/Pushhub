@@ -35,20 +35,19 @@ created: 2026-08-27
 
 ## Spacing Scale
 
-Declared values（全部为 4 的倍数）：
+Declared values（全部落在标准间距集 4 / 8 / 16 / 24 / 32 内）：
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| xs | 4px | 徽标内边距、眼睛图标与相邻文字间隙 |
-| sm | 8px | 同组控件间隙（密钥行的掩码/眼睛/复制三件套）、消息列表 vertical gap、行内小按钮上下 padding |
-| md | 12px | 卡片内边距（频道详情面板、密钥行、接入片段、消息卡片，同 viewer `.msg` 的 `8px 12px`） |
-| lg | 16px | 页面左右 padding（同 viewer）、区块之间间距 |
-| xl | 24px | 详情面板内大区块分隔（Channel Key 区 / Send Key 区 / 历史区 / 删除区）、h2 上边距（同 viewer） |
-| 2xl | 32px | 顶栏与主内容区间距 |
+| xs | 4px | 徽标内边距、眼睛图标与相邻文字间隙、行内小按钮上下 padding |
+| sm | 8px | 同组控件间隙（密钥行的掩码/眼睛/复制三件套）、消息列表 vertical gap、卡片垂直内边距（8px 16px 的垂直侧） |
+| md | 16px | 卡片水平内边距（8px 16px 的水平侧）、页面左右 padding（同 viewer）、区块之间间距 |
+| lg | 24px | 详情面板内大区块分隔（Channel Key 区 / Send Key 区 / 历史区 / 删除区）、h2 上边距（同 viewer） |
+| xl | 32px | 顶栏与主内容区间距 |
 
-Exceptions: none（viewer 中个别 6px/18px 值不入契约，统一归一到 8px/16px——视觉差异不可感知，换取 4px 网格纯净）
+Exceptions: none（viewer 的 6px/18px 及卡片 12px 水平内边距均不入契约，统一归一：卡片内边距 `8px 16px`——垂直 8 / 水平 16，两侧均落标准刻度；与 viewer 视觉差异轻微，换取刻度纯净）
 
-**控件尺寸：** 主按钮 `padding: 8px 16px`；行内小按钮（眼睛/复制/吊销）`padding: 4px 12px`、最小可点击高度 28px。桌面管理工具，无移动触屏 44px 例外。
+**控件尺寸：** 主按钮 `padding: 8px 16px`；行内小按钮（眼睛/复制/吊销）`padding: 4px 8px`、最小可点击高度 24px。桌面管理工具，无移动触屏 44px 例外。
 
 **布局骨架（D-38 单页列表+详情）：**
 
@@ -67,11 +66,11 @@ Exceptions: none（viewer 中个别 6px/18px 值不入契约，统一归一到 8
 |------|------|--------|-------------|
 | Body | 16px（1rem） | 400 | 1.5 |
 | Label / secondary | 13.6px（0.85rem） | 400 | 1.45 |
-| Section heading（h2） | 16.8px（1.05rem） | 700 | 1.3 |
+| Section heading（h2） | 18px（1.125rem） | 700 | 1.3 |
 | Page title（h1） | 22.4px（1.4rem） | 700 | 1.25 |
 
-- **恰好两个字重**：400（正文/次要文字）与 700（标题、strong、选中频道名）——不使用 500/600
-- Exceptions：等宽小号 12px（0.75rem）`ui-monospace` 用于历史消息时间戳与 seq（如 `#42 14:03:22`，同 viewer time 元素）
+- **恰好 4 个字号、2 个字重**：字重仅 400（正文/次要文字）与 700（标题、strong、选中频道名）——不使用 500/600。h2 由 viewer 的 1.05rem（16.8px）提至 18px：与 body 16px 拉开层级分离（采纳 checker 建议，仍在 4 字号上限内）
+- **等宽用法不构成第 5 个字号**：时间戳、seq、密钥掩码、接入片段代码块一律复用 13.6px（0.85rem）+ `ui-monospace` 家族（如 `#42 14:03:22`）——视觉区分来自等宽字体家族而非更小字号
 - 接入片段代码块：13.6px（0.85rem）等宽、`white-space: pre` + `overflow-x: auto`（同 viewer pre 样式）
 
 ---
@@ -187,9 +186,9 @@ curl -X POST {origin}/api/send \
 1. **登录屏障（D-28）**：载入时无 `pushhub.admin` → 仅渲染登录卡；有存储 → 直接渲染主界面并发 `GET /api/admin/channels` 验证，401 → 清存储回登录卡（WR-03 同款 try/catch 读取防护）。登出 = 清 localStorage + 回登录卡。全部 API 调用同源相对路径 + `Authorization: Bearer <key>` 头。
 2. **密钥行（D-29）**：`[掩码 mono 13.6px] [眼睛按钮] [复制按钮]`，gap 8px。掩码格式 **`key.slice(0, 7) + "…" + key.slice(-4)`**（`phc_`/`phs_` 前缀完整保留 + 3 字符可见 + 后 4 字符，如 `phc_Ab3…xYz`）。揭示 = 点眼睛切换明文（inline SVG 图标 + `aria-label` "显示完整密钥"/"隐藏完整密钥"）；揭示态不跨刷新/跨选择持久。复制 = `navigator.clipboard.writeText`（完整密钥），反馈见文案表。API 响应含完整密钥，掩码是**纯前端渲染行为**。
 3. **确认框**：一律原生 `<dialog>.showModal()`（内置焦点陷阱与 Esc 关闭，零依赖）；后果文案在确认按钮获得焦点前完整可见。
-4. **消息历史（D-40）**：详情面板内 `<details>` 折叠区（summary：消息历史（排障）），首次展开懒加载。**seq 倒序**（最新在最上）；每条 = 头部（`#seq` + 时间 mono 12px graytext + title 加粗 textContent + answered 徽标）+ 正文 `PushHub.renderMarkdown(m.text)` 写 innerHTML（唯一 innerHTML 入口）。翻页：底部"加载更多"按钮带 `before=<本页最小 seq>` 请求，每页 50 条（服务端缺省值）；`has_more=false` 时按钮隐藏。
-5. **频道列表**：列表项 = 频道名（textContent）+ 创建日期（12px graytext）；选中项 3px 绿色左指示条 + 文字 700 + `aria-current="true"`。创建成功自动选中新频道并展示接入片段卡。**手动"刷新"按钮**重拉列表——禁止自动轮询（KV list 独立 1,000 次/天额度红线）。
-6. **Send Key 管理（D-30/D-31/D-32）**：行 = `[标签 或「未命名」graytext] [掩码] [创建日期 mono 12px] [眼睛] [复制] [吊销红字]`。创建表单 = 标签 input（maxlength 64，placeholder `如 deploy-bot（可选）`）+ "创建 Send Key"主按钮。列表达 10 个时创建按钮 disabled + 上限提示。
+4. **消息历史（D-40）**：详情面板内 `<details>` 折叠区（summary：消息历史（排障）），首次展开懒加载。**seq 倒序**（最新在最上）；每条 = 头部（`#seq` + 时间 mono 13.6px graytext + title 加粗 textContent + answered 徽标）+ 正文 `PushHub.renderMarkdown(m.text)` 写 innerHTML（唯一 innerHTML 入口）。翻页：底部"加载更多"按钮带 `before=<本页最小 seq>` 请求，每页 50 条（服务端缺省值）；`has_more=false` 时按钮隐藏。
+5. **频道列表**：列表项 = 频道名（textContent）+ 创建日期（13.6px graytext）；选中项 3px 绿色左指示条 + 文字 700 + `aria-current="true"`。创建成功自动选中新频道并展示接入片段卡。**手动"刷新"按钮**重拉列表——禁止自动轮询（KV list 独立 1,000 次/天额度红线）。
+6. **Send Key 管理（D-30/D-31/D-32）**：行 = `[标签 或「未命名」graytext] [掩码] [创建日期 mono 13.6px] [眼睛] [复制] [吊销红字]`。创建表单 = 标签 input（maxlength 64，placeholder `如 deploy-bot（可选）`）+ "创建 Send Key"主按钮。列表达 10 个时创建按钮 disabled + 上限提示。
 7. **表单校验**：频道名 input `maxlength=64` + required（服务端 `CHANNEL_NAME_MAX_LENGTH=64` 兜底）；标签 `maxlength=64`。服务端 400（invalid_body 等）经错误条展示信封 message。
 8. **E2E 锚点（D-41）**：沿用 viewer id 惯例（`#login-form`、`#channel-list`、`#channel-detail`、`#history-list`）；动态行用 `data-testid`（`sendkey-row`、`snippet-card`、`confirm-delete` 等）。
 
