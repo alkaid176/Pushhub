@@ -1,5 +1,5 @@
 /**
- * 管理页 E2E（03-01 切片一 + 03-02 切片二）：真浏览器（Chromium）
+ * 管理页 E2E（03-01 切片一 + 03-02 切片二 + 03-03 切片三）：真浏览器（Chromium）
  * × 真 wrangler dev，测的是部署形态的管理页本身（packages/server/public/
  * admin.html + admin.js，经静态资产分发；挂既有 playwright.config.ts
  * webServer，零新配置）。
@@ -26,6 +26,16 @@
  *    （泄露不互伤，KEY-03 核心）；
  *  - D-31 上限态：API 直建 + UI 建循环至 10 → 按钮 disabled + 提示可见 →
  *    第 11 个 API 直建 400 body.error.code === send_key_limit（双层防线）。
+ *
+ * 切片三（03-03，KEY-04/KEY-02 端到端）覆盖：
+ *  - SC2 重置踢连：双页观察——pageA 管理页走重置确认框（逐字契约抽查）→
+ *    pageB viewer 被踢离开 online（Pitfall 5 红线：断言 dot-online 类名
+ *    消失，勿断言进入 offline——SDK 退避重连永不 fatal）→ 新 Key 重连
+ *    online 恢复且首拉含重置前 2 条消息（历史保留端到端证据）；
+ *  - SC2 旧 Key 失效：重置后旧 channelKey 经 Upgrade 请求 → 401 invalid_key
+ *    （本地无缓存立即生效；生产 ≤60s 为文档化语义）；
+ *  - D-34 删除交互：前缀联动五要素（初始 disabled / 错误输入仍 disabled /
+ *    正确前缀启用 / 删除后频道从列表消失 / 详情空态文案）。
  *
  * 每个 test 结束断言无 CSP 违规（Pitfall 3 警示信号：页面渲染但零交互）：
  * 收集 console 错误与 pageerror，出现 CSP 关键字即 fail。注意 401/400 fetch 在
@@ -475,6 +485,172 @@ test("D-31 上限态：循环建至 10 个 → 按钮 disabled + 提示可见；
   expect(resp11.status()).toBe(400);
   expect(((await resp11.json()) as { error: { code: string } }).error.code).toBe(
     "send_key_limit",
+  );
+
+  expectNoCspViolations(consoleErrors, pageErrors);
+});
+
+// ---------------------------------------------------------------------------
+// 切片三（03-03，KEY-04 重置踢连 / KEY-02 删除交互端到端）
+// ---------------------------------------------------------------------------
+
+/** Node 侧发消息（viewer.spec 同款；历史保留用例的对照数据源）。 */
+async function sendMessage(
+  request: APIRequestContext,
+  sendKey: string,
+  text: string,
+): Promise<void> {
+  const resp = await request.post(`${BASE}/api/send`, {
+    headers: {
+      Authorization: `Bearer ${sendKey}`,
+      "content-type": "application/json",
+    },
+    data: { text },
+  });
+  expect(resp.status()).toBe(200);
+}
+
+/** viewer 状态指示到 online（dot 类名驱动；本切片另写其反断言）。 */
+async function waitViewerOnline(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => document.getElementById("status-dot")?.className.includes("dot-online") === true,
+    null,
+    { timeout: 15_000 },
+  );
+}
+
+test("SC2 重置踢连端到端：viewer 被踢离开 online，新 Key 重连后历史完整保留", async ({
+  page,
+  context,
+  request,
+}) => {
+  const { consoleErrors, pageErrors } = collectPageDiagnostics(page);
+  const pageB = await context.newPage();
+  const diagB = collectPageDiagnostics(pageB);
+
+  const channel = await createChannel(request);
+  // 重置前发 2 条消息（历史保留端到端的对照数据）。
+  await sendMessage(request, channel.sendKey, "pre-reset message one");
+  await sendMessage(request, channel.sendKey, "pre-reset message two");
+
+  // pageB 以 URL 参数连 viewer（A5 注入路径）→ online。
+  await pageB.goto(
+    `/?server=${encodeURIComponent(BASE)}&key=${encodeURIComponent(channel.channelKey)}`,
+  );
+  await waitViewerOnline(pageB);
+
+  // pageA 走重置确认框（逐字契约抽查：三句正文的核心句）。
+  await loginAdmin(page);
+  await selectChannel(page, channel.name);
+  await page.locator("#btn-reset-channel-key").click();
+  await expect(page.locator("#reset-dialog")).toBeVisible();
+  await expect(page.locator("#reset-dialog-body")).toContainText("最长约 1 分钟");
+  await expect(page.locator("#reset-dialog-body")).toContainText(
+    "频道历史消息完整保留",
+  );
+  await page.locator("#btn-reset-confirm").click();
+
+  // 201 后：新密钥明文一次性展示块 + 60s 双活窗口提示条。
+  const display = page.locator('[data-testid="new-key-display"]');
+  await expect(display).toBeVisible();
+  const newKey = await display.locator(".key-value").first().textContent();
+  expect(newKey).toMatch(/^phc_[0-9A-Za-z]{32}$/);
+  expect(newKey).not.toBe(channel.channelKey);
+  await expect(page.locator("#key-reset-hint")).toContainText("最长约 1 分钟");
+
+  // 被踢断言（Pitfall 5 红线：SDK 对意外 close 一律退避重连永不 fatal——
+  // 只断言 dot-online 类名消失，勿断言进入 offline/已断开文案；15s 窗口）。
+  await pageB.waitForFunction(
+    () =>
+      (document.getElementById("status-dot")?.className ?? "").includes(
+        "dot-online",
+      ) === false,
+    null,
+    { timeout: 15_000 },
+  );
+
+  // 新 Key 重连（URL 参数覆盖 localStorage 缺省）：online 恢复 + 首拉含
+  // 重置前 2 条消息——历史保留端到端证据（KEY-04/SC2）。
+  await pageB.goto(
+    `/?server=${encodeURIComponent(BASE)}&key=${encodeURIComponent(newKey!)}`,
+  );
+  await waitViewerOnline(pageB);
+  await expect(
+    pageB.locator("#messages .msg", { hasText: "pre-reset message one" }),
+  ).toHaveCount(1);
+  await expect(
+    pageB.locator("#messages .msg", { hasText: "pre-reset message two" }),
+  ).toHaveCount(1);
+
+  expectNoCspViolations(consoleErrors, pageErrors);
+  expectNoCspViolations(diagB.consoleErrors, diagB.pageErrors);
+});
+
+test("SC2 旧 Channel Key 失效：重置后旧 Key 经 Upgrade 请求 401 invalid_key（本地无缓存立即生效）", async ({
+  request,
+}) => {
+  const channel = await createChannel(request);
+  const resetResp = await request.post(
+    `${BASE}/api/admin/channels/${channel.channelId}/reset-channel-key`,
+    { headers: { Authorization: `Bearer ${ADMIN_KEY}` } },
+  );
+  expect(resetResp.status()).toBe(201);
+  const newKey = ((await resetResp.json()) as { channelKey: string }).channelKey;
+  expect(newKey).not.toBe(channel.channelKey);
+
+  // 旧 Key 走 /api/ws/<旧>（Upgrade 头——与浏览器 WS 握手同形）→ 401。
+  // 本地 wrangler dev 无边缘缓存，立即生效；生产 ≤60s 双活窗口为文档化语义。
+  const denied = await request.get(`${BASE}/api/ws/${channel.channelKey}`, {
+    headers: { Upgrade: "websocket", Connection: "Upgrade" },
+  });
+  expect(denied.status()).toBe(401);
+  expect(((await denied.json()) as { error: { code: string } }).error.code).toBe(
+    "invalid_key",
+  );
+});
+
+test("D-34 删除交互：前缀联动（初始 disabled / 错误输入仍 disabled / 正确前缀启用）+ 删除后列表消失与空态", async ({
+  page,
+  request,
+}) => {
+  const { consoleErrors, pageErrors } = collectPageDiagnostics(page);
+
+  const channel = await createChannel(request);
+  await loginAdmin(page);
+  await selectChannel(page, channel.name);
+
+  await page.locator("#btn-delete-channel").click();
+  const dlg = page.locator("#delete-dialog");
+  await expect(dlg).toBeVisible();
+  await expect(dlg.locator("#delete-dialog-title")).toContainText(
+    `删除频道「${channel.name}」`,
+  );
+  await expect(dlg.locator("#delete-dialog-body")).toContainText(
+    "硬删除不可恢复",
+  );
+
+  const delBtn = page.locator("#btn-delete-confirm");
+  await expect(delBtn).toHaveText("我已理解后果，删除频道");
+
+  // 五要素 1：初始 disabled（前缀联动门槛）。
+  await expect(delBtn).toBeDisabled();
+
+  // 五要素 2：错误输入（频道名反转片段——非前缀）仍 disabled。
+  const wrongInput = channel.name.split("").reverse().join("");
+  await dlg.locator("#delete-name-input").fill(wrongInput);
+  await expect(delBtn).toBeDisabled();
+
+  // 五要素 3：正确前缀（前 3 字符）启用。
+  await dlg.locator("#delete-name-input").fill(channel.name.slice(0, 3));
+  await expect(delBtn).toBeEnabled();
+
+  // 五要素 4/5：确认 → 频道从列表消失 + 详情回空态文案。
+  await delBtn.click();
+  await expect(
+    page.locator("#channel-list .channel-item", { hasText: channel.name }),
+  ).toHaveCount(0);
+  await expect(page.locator("#channel-detail")).toContainText(
+    "在左侧选择一个频道查看详情。",
   );
 
   expectNoCspViolations(consoleErrors, pageErrors);
