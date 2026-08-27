@@ -37,6 +37,17 @@
  *  - D-34 删除交互：前缀联动五要素（初始 disabled / 错误输入仍 disabled /
  *    正确前缀启用 / 删除后频道从列表消失 / 详情空态文案）。
  *
+ * 切片四（03-04，ADM-03/SC3 端到端）覆盖：
+ *  - D-40 历史渲染与消毒：3 条消息（Markdown 加粗 / 攻击样本 script+img
+ *    onerror / 无 title 纯文本）→ 展开折叠区 → 首条 #seq 为最新（倒序）→
+ *    加粗经 renderMarkdown 真路径成 strong → #history-list 无 script 元素、
+ *    无 on* 属性（存储型 XSS 双纵深的前端侧证据，T-03-16）→ 无 title 不渲染
+ *    标题行（strong 计数恰 1）→ 每条「未回复」徽标 → has_more=false 加载
+ *    更多按钮 hidden；
+ *  - D-40 空态与 API before 翻页抽查：空频道展开 → 空态文案；另建频道发
+ *    3 条后 GET messages?before=<第 2 条 seq> 返回恰 [seq1]（keyset 抽查——
+ *    完整矩阵在 admin-history.test.ts 集成测试）。
+ *
  * 每个 test 结束断言无 CSP 违规（Pitfall 3 警示信号：页面渲染但零交互）：
  * 收集 console 错误与 pageerror，出现 CSP 关键字即 fail。注意 401/400 fetch 在
  * Chromium 会记 console error（Failed to load resource…）——那是正常网络
@@ -652,6 +663,136 @@ test("D-34 删除交互：前缀联动（初始 disabled / 错误输入仍 disab
   await expect(page.locator("#channel-detail")).toContainText(
     "在左侧选择一个频道查看详情。",
   );
+
+  expectNoCspViolations(consoleErrors, pageErrors);
+});
+
+// ---------------------------------------------------------------------------
+// 切片四（03-04，ADM-03/SC3——消息历史排障视图端到端）
+// ---------------------------------------------------------------------------
+
+/** 发消息并返回服务端分配的 seq（翻页抽查的游标数据源）。 */
+async function sendMessageSeq(
+  request: APIRequestContext,
+  sendKey: string,
+  text: string,
+): Promise<number> {
+  const resp = await request.post(`${BASE}/api/send`, {
+    headers: {
+      Authorization: `Bearer ${sendKey}`,
+      "content-type": "application/json",
+    },
+    data: { text },
+  });
+  expect(resp.status()).toBe(200);
+  return ((await resp.json()) as { seq: number }).seq;
+}
+
+test("D-40 历史渲染与消毒：倒序首条最新、renderMarkdown 真路径、攻击样本无害、未回复徽标、按钮隐藏", async ({
+  page,
+  request,
+}) => {
+  const { consoleErrors, pageErrors } = collectPageDiagnostics(page);
+
+  const channel = await createChannel(request);
+  // 三条消息均无 title：标题行渲染（strong 计数）断言的唯一 strong 来源是
+  // 第 1 条正文的 **加粗**——无 title 不渲染标题行由此一次证明。
+  await sendMessageSeq(request, channel.sendKey, "第一条含 **加粗词** 的消息");
+  await sendMessageSeq(
+    request,
+    channel.sendKey,
+    '<script>alert("xss")</script>后置文本 <img src=x onerror=alert(1)>',
+  );
+  await sendMessageSeq(request, channel.sendKey, "第三条无 title 纯文本");
+
+  await loginAdmin(page);
+  await selectChannel(page, channel.name);
+
+  // 展开折叠区（首展懒加载 → GET messages 首页）。
+  await page.locator("#history-details summary").click();
+  const list = page.locator("#history-list");
+  await expect(list.locator('[data-testid="history-msg"]')).toHaveCount(3);
+
+  // 倒序：首条（列表最上）#seq 为第 3 条（最新）。
+  await expect(list.locator(".hist-msg").first().locator(".hist-seq")).toHaveText(
+    "#3",
+  );
+  await expect(list.locator(".hist-msg").nth(1).locator(".hist-seq")).toHaveText(
+    "#2",
+  );
+  await expect(list.locator(".hist-msg").nth(2).locator(".hist-seq")).toHaveText(
+    "#1",
+  );
+
+  // renderMarkdown 真路径：加粗语法成 strong 元素（非 textContent 硬编码）。
+  await expect(list.locator("strong", { hasText: "加粗词" })).toHaveCount(1);
+  // 无 title 不渲染标题行：全列表 strong 计数恰 1（即第 1 条正文的加粗词）。
+  await expect(list.locator("strong")).toHaveCount(1);
+
+  // 攻击样本消毒（T-03-16 前端侧证据）：无 script 元素、无 onerror 属性；
+  // 附加 on* 属性全扫描（viewer.spec audit 同款）。
+  await expect(list.locator("script")).toHaveCount(0);
+  await expect(list.locator("[onerror]")).toHaveCount(0);
+  const onAttrs = await list.evaluate((root) => {
+    const hits: string[] = [];
+    root.querySelectorAll("*").forEach((el) => {
+      for (const a of el.getAttributeNames()) {
+        if (/^on/i.test(a)) hits.push(`${el.tagName}@${a}`);
+      }
+    });
+    return hits;
+  });
+  expect(onAttrs).toEqual([]);
+
+  // answered 徽标：本期恒「未回复」（graytext 类）。
+  await expect(list.locator(".badge-unanswered")).toHaveCount(3);
+  await expect(list.locator(".badge-unanswered").first()).toHaveText("未回复");
+
+  // has_more=false（3 条 < 缺省 50）：加载更多按钮隐藏。
+  await expect(page.locator("#btn-history-more")).toBeHidden();
+
+  expectNoCspViolations(consoleErrors, pageErrors);
+});
+
+test("D-40 空态与 API before 翻页抽查：空频道空态文案；before=<第 2 条 seq> 返回恰 [seq1]", async ({
+  page,
+  request,
+}) => {
+  const { consoleErrors, pageErrors } = collectPageDiagnostics(page);
+
+  // 空频道：展开历史区 → 空态文案（UI-SPEC 逐字）。
+  const emptyChannel = await createChannel(request);
+  await loginAdmin(page);
+  await selectChannel(page, emptyChannel.name);
+  await page.locator("#history-details summary").click();
+  await expect(page.locator("#history-list")).toContainText(
+    "该频道还没有消息——Webhook 发送第一条消息后会显示在这里。",
+  );
+
+  // keyset API 抽查（完整矩阵在 admin-history.test.ts）：发 3 条后
+  // before=<第 2 条 seq>（=2）→ 恰 [seq1]。
+  const pageChannel = await createChannel(request);
+  const seqs: number[] = [];
+  for (const text of ["page-a", "page-b", "page-c"]) {
+    seqs.push(await sendMessageSeq(request, pageChannel.sendKey, text));
+  }
+  expect(seqs).toEqual([1, 2, 3]);
+
+  const resp = await request.get(
+    `${BASE}/api/admin/channels/${pageChannel.channelId}/messages?before=${seqs[1]}`,
+    { headers: { Authorization: `Bearer ${ADMIN_KEY}` } },
+  );
+  expect(resp.status()).toBe(200);
+  const body = (await resp.json()) as {
+    messages: { seq: number; text: string }[];
+    has_more: boolean;
+    oldest_kept_seq: number;
+  };
+  expect(body.messages).toHaveLength(1);
+  expect(body.messages[0].seq).toBe(seqs[0]);
+  expect(body.messages[0].text).toBe("page-a");
+  expect(body.has_more).toBe(false);
+  expect(body.oldest_kept_seq).toBe(1);
 
   expectNoCspViolations(consoleErrors, pageErrors);
 });
