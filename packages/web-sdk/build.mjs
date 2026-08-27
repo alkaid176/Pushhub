@@ -13,7 +13,7 @@
  * 静态 renderMarkdown 存在（D-19）。min 体积超 120KB 打报警（不失败）。
  */
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -43,6 +43,28 @@ execFileSync(
 const target = resolve(pkgRoot, "../server/public/pushhub.js");
 mkdirSync(dirname(target), { recursive: true });
 copyFileSync(outfile, target);
+
+// ---- ?v= 缓存参数构建期注入（02-05，G-02-3）----
+// 读根 package.json version，替换 index.html 中 pushhub.js?v=… 的参数值
+// （机制化取代人工同步纪律——0.1.8 时 ?v= 残留 0.1.7 即该缺口本身）。
+// 硬断言"恰命中一次"：命中 0 次（未来 index.html 重构静默丢标签）或多于
+// 一次（多标签漂移）均构建失败——构建失败比静默 stale 缓存投放旧 SDK
+// 字节安全。cache-bust-sync.test.ts 是机制的双保险断言（非替代品）。
+const indexPath = resolve(pkgRoot, "../server/public/index.html");
+const rootVersion = JSON.parse(
+  readFileSync(resolve(pkgRoot, "../../package.json"), "utf8"),
+).version;
+const indexHtml = readFileSync(indexPath, "utf8");
+const refRe = /pushhub\.js\?v=[0-9A-Za-z.-]+/g;
+const hits = indexHtml.match(refRe) ?? [];
+if (hits.length !== 1) {
+  console.error(
+    `INJECT FAIL: index.html pushhub.js?v= 引用期望恰 1 处，实际 ${hits.length} 处（${hits.join(", ") || "无"}）——请检查 index.html 结构`,
+  );
+  process.exit(1);
+}
+writeFileSync(indexPath, indexHtml.replace(refRe, `pushhub.js?v=${rootVersion}`));
+console.log(`injected ?v=${rootVersion} into server/public/index.html`);
 
 const bytes = readFileSync(outfile);
 const min = bytes.length;

@@ -111,7 +111,7 @@ try {
     null,
     { timeout: 30_000 },
   );
-  console.log("OK [viewer-online]: status → online（0.1.7 查看器接入）");
+  console.log(`OK [viewer-online]: status → online（${EXPECT_VERSION} 查看器接入）`);
   await send(channel.sendKey, MSG_BASE);
   await page.waitForFunction(
     (t) => [...document.querySelectorAll("#messages li")].some((li) => li.textContent?.includes(t)),

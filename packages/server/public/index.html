@@ -126,8 +126,8 @@
       <div id="attack-out" class="attack-out"></div>
     </section>
 
-    <!-- ?v= 缓存规避：值 = 当前部署版本号。升级 SDK（重建 pushhub.js）时同步改此值（README 有约定）。 -->
-    <script src="/pushhub.js?v=0.1.7"></script>
+    <!-- ?v= 缓存规避：构建期由 build.mjs 自动注入根 package.json version，勿手改（cache-bust-sync.test.ts 恒一致断言护航）。 -->
+    <script src="/pushhub.js?v=0.1.8"></script>
     <script src="/viewer.js"></script>
   </body>
 </html>
