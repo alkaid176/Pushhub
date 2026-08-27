@@ -44,27 +44,32 @@ const target = resolve(pkgRoot, "../server/public/pushhub.js");
 mkdirSync(dirname(target), { recursive: true });
 copyFileSync(outfile, target);
 
-// ---- ?v= 缓存参数构建期注入（02-05，G-02-3）----
-// 读根 package.json version，替换 index.html 中 pushhub.js?v=… 的参数值
-// （机制化取代人工同步纪律——0.1.8 时 ?v= 残留 0.1.7 即该缺口本身）。
-// 硬断言"恰命中一次"：命中 0 次（未来 index.html 重构静默丢标签）或多于
+// ---- ?v= 缓存参数构建期注入（02-05，G-02-3；03-01 扩展 admin.html）----
+// 读根 package.json version，替换 index.html / admin.html 中 pushhub.js?v=…
+// 的参数值（机制化取代人工同步纪律——0.1.8 时 ?v= 残留 0.1.7 即该缺口本身）。
+// 每个文件独立硬断言"恰命中一次"：命中 0 次（未来重构静默丢标签）或多于
 // 一次（多标签漂移）均构建失败——构建失败比静默 stale 缓存投放旧 SDK
 // 字节安全。cache-bust-sync.test.ts 是机制的双保险断言（非替代品）。
-const indexPath = resolve(pkgRoot, "../server/public/index.html");
 const rootVersion = JSON.parse(
   readFileSync(resolve(pkgRoot, "../../package.json"), "utf8"),
 ).version;
-const indexHtml = readFileSync(indexPath, "utf8");
 const refRe = /pushhub\.js\?v=[0-9A-Za-z.-]+/g;
-const hits = indexHtml.match(refRe) ?? [];
-if (hits.length !== 1) {
-  console.error(
-    `INJECT FAIL: index.html pushhub.js?v= 引用期望恰 1 处，实际 ${hits.length} 处（${hits.join(", ") || "无"}）——请检查 index.html 结构`,
-  );
-  process.exit(1);
+
+function injectCacheBustVersion(htmlPath, fileName) {
+  const html = readFileSync(htmlPath, "utf8");
+  const hits = html.match(refRe) ?? [];
+  if (hits.length !== 1) {
+    console.error(
+      `INJECT FAIL: ${fileName} pushhub.js?v= 引用期望恰 1 处，实际 ${hits.length} 处（${hits.join(", ") || "无"}）——请检查 ${fileName} 结构`,
+    );
+    process.exit(1);
+  }
+  writeFileSync(htmlPath, html.replace(refRe, `pushhub.js?v=${rootVersion}`));
+  console.log(`injected ?v=${rootVersion} into server/public/${fileName}`);
 }
-writeFileSync(indexPath, indexHtml.replace(refRe, `pushhub.js?v=${rootVersion}`));
-console.log(`injected ?v=${rootVersion} into server/public/index.html`);
+
+injectCacheBustVersion(resolve(pkgRoot, "../server/public/index.html"), "index.html");
+injectCacheBustVersion(resolve(pkgRoot, "../server/public/admin.html"), "admin.html");
 
 const bytes = readFileSync(outfile);
 const min = bytes.length;

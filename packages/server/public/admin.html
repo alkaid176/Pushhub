@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- CSP 纵深防御（T-02-09，meta 与 index.html 同串）：script-src 'self' 禁 inline
+         ——admin.js 独立成文件即为满足此约束（Pitfall 3："单文件"= 单页无构建，非脚本内嵌）。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src * data:; base-uri 'self'; form-action 'self'"
+    />
+    <title>PushHub 管理</title>
+    <style>
+      /* Design tokens（03-UI-SPEC）：间距 4/8/16/24/32；字号恰 4 个（16/13.6/18/22.4px）
+         字重恰 2 个（400/700）；色彩 canvas/canvastext 系统色 + 语义色
+         #2e9e5b/#c0392b（各限 4 保留项）/#9a9a9a/#d9a300/graytext。 */
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 16px;
+        font-weight: 400;
+        line-height: 1.5;
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      h1 { font-size: 22.4px; font-weight: 700; line-height: 1.25; margin: 0; }
+      h2 { font-size: 18px; font-weight: 700; line-height: 1.3; margin: 8px 0 4px; }
+      .mono { font-family: ui-monospace, monospace; font-size: 13.6px; line-height: 1.45; }
+      button {
+        font: inherit;
+        font-size: 13.6px;
+        font-weight: 400;
+        line-height: 1.45;
+        cursor: pointer;
+      }
+      button:disabled { cursor: default; }
+      input {
+        font: inherit;
+        padding: 8px;
+        border: 1px solid canvastext;
+        border-radius: 4px;
+        min-width: 0;
+      }
+      ::placeholder { color: graytext; }
+
+      .card {
+        border: 1px solid canvastext;
+        border-radius: 8px;
+        padding: 8px 16px;
+        background: canvas;
+      }
+      .desc { color: graytext; font-size: 13.6px; line-height: 1.45; margin: 8px 0; }
+
+      /* 顶栏（xl=32 与主内容区间距）。 */
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 32px;
+      }
+      .topbar-actions { display: flex; gap: 8px; }
+      .text-btn { background: none; border: none; padding: 4px 8px; color: canvastext; min-height: 24px; }
+      .text-btn:disabled { color: #9a9a9a; }
+
+      /* 主提交按钮（accent 保留项 1：填充 #2e9e5b + 白字）。 */
+      .primary-btn {
+        background: #2e9e5b;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 8px 16px;
+      }
+      .primary-btn:disabled { background: #9a9a9a; }
+
+      /* 复制成功反馈（accent 保留项 4）。 */
+      button[data-copied] { color: #2e9e5b; }
+
+      /* Phase 4 回复徽标样式先行定义（accent 保留项 2 / 禁用灰）——本切片恒不触发。 */
+      .badge-answered { color: #2e9e5b; font-size: 13.6px; }
+      .badge-unanswered { color: #9a9a9a; font-size: 13.6px; }
+
+      /* 错误条（destructive 保留项 4，同 viewer error-bar）。 */
+      .error-bar {
+        margin: 8px 0;
+        padding: 8px 16px;
+        border-radius: 6px;
+        background: #c0392b;
+        color: #fff;
+        font-size: 13.6px;
+        line-height: 1.45;
+        word-break: break-all;
+      }
+
+      /* 登录卡（D-28 屏障）。 */
+      .login-card { max-width: 480px; margin: 0 auto; }
+      .login-row { display: flex; gap: 8px; margin-top: 8px; }
+      .login-row input { flex: 1; }
+
+      /* 主界面两栏（D-38）：≥800px 左栏 300px + 右栏 flex:1。 */
+      .columns { display: flex; gap: 16px; align-items: flex-start; }
+      .left-col {
+        width: 300px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      #channel-detail { flex: 1; min-width: 0; }
+      @media (max-width: 799px) {
+        .columns { flex-direction: column; }
+        .left-col { width: auto; }
+      }
+
+      /* 创建表单。 */
+      .field-label { display: block; color: graytext; font-size: 13.6px; margin: 8px 0 4px; }
+      .create-row { display: flex; gap: 8px; }
+      .create-row input { flex: 1; }
+
+      /* 频道列表（独立滚动 + 空态）。 */
+      .channel-list {
+        max-height: 480px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .list-status { color: graytext; font-size: 13.6px; margin: 4px 0; }
+      .empty-heading { font-size: 18px; font-weight: 700; margin: 8px 0 4px; }
+      .empty-body { color: graytext; font-size: 13.6px; margin: 0; }
+      .channel-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        width: 100%;
+        text-align: left;
+        background: none;
+        border: none;
+        border-left: 3px solid transparent;
+        border-radius: 4px;
+        padding: 4px 8px;
+        color: canvastext;
+        font-size: 16px;
+        min-height: 24px;
+      }
+      .channel-item.selected { border-left-color: #2e9e5b; font-weight: 700; }
+      .channel-item-name { overflow-wrap: anywhere; }
+      .channel-item-date { color: graytext; flex-shrink: 0; }
+
+      /* 详情面板（D-38 右栏）。 */
+      .detail-empty { color: graytext; font-size: 13.6px; margin: 8px 0; }
+      .detail-name { margin: 8px 0 4px; overflow-wrap: anywhere; }
+      .detail-meta { color: graytext; margin: 0 0 8px; }
+      .detail-block { margin-top: 24px; }
+      .detail-block h2 { margin: 8px 0 4px; }
+
+      /* 密钥行（D-29）：[掩码 mono] [眼睛] [复制]，gap 8px。 */
+      .key-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .key-value { overflow-wrap: anywhere; word-break: break-all; }
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        background: none;
+        border: none;
+        padding: 4px;
+        color: canvastext;
+        min-height: 24px;
+      }
+      .copy-btn { background: none; border: 1px solid canvastext; border-radius: 4px; padding: 4px 8px; color: canvastext; min-height: 24px; }
+      .sendkey-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+      .sendkey-label { color: graytext; font-size: 13.6px; }
+      .sendkey-date { color: graytext; }
+
+      /* 接入片段卡（D-39：创建成功的临门一脚）。 */
+      .snippet-card { border: 1px solid canvastext; border-radius: 8px; padding: 8px 16px; margin-top: 16px; }
+      .snippet-title { margin: 8px 0 4px; overflow-wrap: anywhere; }
+      .snippet-block { margin-top: 8px; }
+      .snippet-block-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .snippet-block-label { font-size: 13.6px; font-weight: 700; }
+      .snippet-code {
+        white-space: pre;
+        overflow-x: auto;
+        padding: 8px;
+        border-radius: 4px;
+        background: canvasinfoBg;
+        margin: 4px 0 0;
+        font-family: ui-monospace, monospace;
+        font-size: 13.6px;
+        line-height: 1.45;
+      }
+      .copy-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+      .copy-line-label { color: graytext; font-size: 13.6px; flex-shrink: 0; }
+      .snippet-close { margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>PushHub 管理</h1>
+      <nav class="topbar-actions" id="topbar-actions" hidden>
+        <button type="button" id="btn-refresh" class="text-btn">刷新</button>
+        <button type="button" id="btn-logout" class="text-btn">登出</button>
+      </nav>
+    </header>
+
+    <div id="error-bar" class="error-bar" hidden></div>
+
+    <!-- 登录卡（D-28：未登录时唯一可见内容）。 -->
+    <form id="login-form" class="card login-card">
+      <p class="desc">
+        输入 Admin Key 登录。密钥仅保存在本机浏览器 localStorage（键 pushhub.admin），点「登出」清除；不使用服务端会话。
+      </p>
+      <div class="login-row">
+        <input
+          id="admin-key-input"
+          name="admin-key"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="粘贴 Admin Key"
+        />
+        <button type="submit" id="btn-login" class="primary-btn">登录</button>
+      </div>
+    </form>
+
+    <!-- 主界面（登录后可见）。 -->
+    <main id="app" hidden>
+      <div class="columns">
+        <aside class="left-col">
+          <form id="create-form" class="card">
+            <label class="field-label" for="channel-name-input">频道名称</label>
+            <div class="create-row">
+              <input
+                id="channel-name-input"
+                name="name"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                maxlength="64"
+                required
+                placeholder="如 build-alerts"
+              />
+              <button type="submit" id="btn-create" class="primary-btn">创建频道</button>
+            </div>
+          </form>
+          <nav id="channel-list" class="channel-list" aria-label="频道列表"></nav>
+        </aside>
+        <section id="channel-detail" class="card">
+          <p class="detail-empty">在左侧选择一个频道查看详情。</p>
+        </section>
+      </div>
+    </main>
+
+    <!-- 眼睛图标（D-29）：inline SVG 是标记非脚本，CSP script-src 'self' 兼容；
+         <template> 克隆取图，全程无 innerHTML。 -->
+    <template id="eye-icon">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"
+        />
+        <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2" />
+      </svg>
+    </template>
+
+    <!-- ?v= 缓存规避：构建期由 build.mjs 自动注入根 package.json version，勿手改（cache-bust-sync.test.ts 恒一致断言护航）。 -->
+    <script src="/pushhub.js?v=0.1.10"></script>
+    <script src="/admin.js"></script>
+  </body>
+</html>
