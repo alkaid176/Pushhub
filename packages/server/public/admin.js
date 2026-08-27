@@ -1,5 +1,6 @@
 /**
- * PushHub 管理页逻辑（03-01 Task 2，D-28/D-29/D-37/D-38/D-39；03-02 Send Key 管理）。
+ * PushHub 管理页逻辑（03-01 Task 2，D-28/D-29/D-37/D-38/D-39；03-02 Send Key
+ * 管理；03-03 Channel Key 重置与频道删除）。
  *
  * 本切片职责：
  *  - 登录屏障（D-28）：载入无 pushhub.admin 存储 → 仅登录卡；有存储 → 主界面
@@ -13,6 +14,12 @@
  *    复制 + 吊销红字）；达 10 个按钮 disabled + 上限提示；吊销走原生 dialog
  *    确认框（逐字文案）→ DELETE 204 → 行消失；400 send_key_limit 经错误条
  *    透传（UI 上限态与 API 检查双保险）。
+ *  - Channel Key 重置（03-03，D-33）：确认框逐字契约（客户端立即断开/旧密钥
+ *    ≤1 分钟全局失效/历史完整保留）→ POST 201 → 新密钥明文一次性展示（mono +
+ *    复制，接入片段卡同款）+ 60s 双活窗口提示条（#d9a300 边框式）+ 掩码行刷新。
+ *  - 频道删除（03-03，D-34 硬删除）：确认框前缀联动（输入非空且为频道名前缀
+ *    才启用——GitHub 删仓库模式宽松变体）→ DELETE 204 → 列表移除 + 详情
+ *    回空态。
  *
  * 安全纪律：
  *  - 全文件零 innerHTML——频道名/标签/日期/密钥/错误消息/确认框文案一律
@@ -49,6 +56,17 @@
   var revokeDialogBody = document.getElementById("revoke-dialog-body");
   var btnRevokeCancel = document.getElementById("btn-revoke-cancel");
   var btnRevokeConfirm = document.getElementById("btn-revoke-confirm");
+  var resetDialog = document.getElementById("reset-dialog");
+  var resetDialogTitle = document.getElementById("reset-dialog-title");
+  var resetDialogBody = document.getElementById("reset-dialog-body");
+  var btnResetCancel = document.getElementById("btn-reset-cancel");
+  var btnResetConfirm = document.getElementById("btn-reset-confirm");
+  var deleteDialog = document.getElementById("delete-dialog");
+  var deleteDialogTitle = document.getElementById("delete-dialog-title");
+  var deleteDialogBody = document.getElementById("delete-dialog-body");
+  var deleteNameInput = document.getElementById("delete-name-input");
+  var btnDeleteCancel = document.getElementById("btn-delete-cancel");
+  var btnDeleteConfirm = document.getElementById("btn-delete-confirm");
 
   var adminKey = null;
   var channels = [];
@@ -59,6 +77,12 @@
   var pendingSendKeySnippet = null;
   /** 待确认吊销的 Send Key（dialog 打开期间持有，关闭即弃）。 */
   var pendingRevoke = null;
+  /** 待重置的频道 channelId（dialog 打开期间持有，关闭即弃）。 */
+  var pendingReset = null;
+  /** 刚重置出的新 Channel Key（D-33：明文一次性展示数据，关闭即弃）。 */
+  var pendingNewKey = null;
+  /** 待删除的频道（D-34：dialog 打开期间持有，关闭即弃）。 */
+  var pendingDelete = null;
 
   // ---- localStorage（WR-03：读写均 try/catch；存储不可用时降级为会话内存态） ----
 
@@ -406,6 +430,46 @@
     return card;
   }
 
+  /**
+   * 重置 Channel Key 成功卡（03-03，D-33）：新密钥明文一次性展示（mono +
+   * 复制按钮，接入片段卡同款）+ 60s 双活窗口提示条（#d9a300 边框式非填充），
+   * 关闭即弃。
+   */
+  function buildResetKeyCard(s) {
+    var card = document.createElement("div");
+    card.className = "snippet-card";
+    card.setAttribute("data-testid", "new-key-display");
+
+    var title = document.createElement("h2");
+    title.className = "snippet-title";
+    title.textContent =
+      "已重置 Channel Key——请立即复制新密钥（关闭后列表中密钥以掩码显示，需要时可点眼睛按钮查看完整密钥）";
+    card.appendChild(title);
+
+    var block = snippetBlock("新 Channel Key", s.channelKey);
+    block.appendChild(buildCopyLine("Channel Key", s.channelKey));
+    card.appendChild(block);
+
+    var hint = document.createElement("p");
+    hint.id = "key-reset-hint";
+    hint.className = "dual-window-hint";
+    hint.textContent =
+      "已重置。旧密钥最长约 1 分钟内仍可能被边缘缓存放行，之后全局失效。";
+    card.appendChild(hint);
+
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "text-btn snippet-close";
+    close.textContent = "已保存，关闭";
+    close.addEventListener("click", function () {
+      pendingNewKey = null;
+      renderDetail();
+    });
+    card.appendChild(close);
+
+    return card;
+  }
+
   // ---- 频道列表（D-38：0/1/N 同一列表形态；独立滚动） ----
 
   function renderListLoading() {
@@ -494,6 +558,9 @@
     ) {
       channelDetail.appendChild(buildSendKeySnippetCard(pendingSendKeySnippet));
     }
+    if (pendingNewKey !== null && pendingNewKey.channelId === ch.channelId) {
+      channelDetail.appendChild(buildResetKeyCard(pendingNewKey));
+    }
 
     var ckBlock = document.createElement("section");
     ckBlock.className = "detail-block";
@@ -501,9 +568,33 @@
     ckHead.textContent = "Channel Key";
     ckBlock.appendChild(ckHead);
     ckBlock.appendChild(buildKeyRow(ch.channelKey));
+    // 重置入口（D-33，destructive 保留清单第 3 项：红字按钮）。
+    var btnResetKey = document.createElement("button");
+    btnResetKey.type = "button";
+    btnResetKey.id = "btn-reset-channel-key";
+    btnResetKey.className = "revoke-btn";
+    btnResetKey.textContent = "重置 Channel Key";
+    btnResetKey.addEventListener("click", function () {
+      openResetDialog(ch.channelId);
+    });
+    ckBlock.appendChild(btnResetKey);
     channelDetail.appendChild(ckBlock);
 
     channelDetail.appendChild(buildSendKeysBlock(ch));
+
+    // 删除频道（D-34 硬删除，destructive 保留清单第 1 项：详情面板底部红按钮）。
+    var danger = document.createElement("section");
+    danger.className = "danger-block";
+    var btnDelete = document.createElement("button");
+    btnDelete.type = "button";
+    btnDelete.id = "btn-delete-channel";
+    btnDelete.className = "revoke-btn";
+    btnDelete.textContent = "删除频道";
+    btnDelete.addEventListener("click", function () {
+      openDeleteDialog(ch);
+    });
+    danger.appendChild(btnDelete);
+    channelDetail.appendChild(danger);
   }
 
   /**
@@ -703,6 +794,154 @@
       });
   });
 
+  // ---- Channel Key 重置交互（03-03，D-33——确认框逐字契约 + 一次性明文展示） ----
+
+  function openResetDialog(channelId) {
+    pendingReset = channelId;
+    resetDialog.showModal();
+  }
+
+  btnResetCancel.addEventListener("click", function () {
+    pendingReset = null;
+    resetDialog.close();
+  });
+  // Esc 关闭同样清引用（cancel 事件在 close() 与 Esc 两路径都触发）。
+  resetDialog.addEventListener("cancel", function () {
+    pendingReset = null;
+  });
+
+  btnResetConfirm.addEventListener("click", function () {
+    if (pendingReset === null) {
+      resetDialog.close();
+      return;
+    }
+    if (adminKey === null) {
+      pendingReset = null;
+      resetDialog.close();
+      return;
+    }
+    var target = pendingReset;
+    pendingReset = null;
+    resetDialog.close();
+    setBusy(btnResetConfirm, true, "确认重置");
+    hideErrorBar();
+    fetch(
+      "/api/admin/channels/" + encodeURIComponent(target) + "/reset-channel-key",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer " + adminKey },
+      },
+    )
+      .then(fetchJsonPair)
+      .then(function (r) {
+        setBusy(btnResetConfirm, false, "确认重置");
+        if (r.resp.status === 201 && r.json && r.json.channelKey) {
+          // 新密钥明文一次性展示 + 60s 提示条；掩码行经 refreshChannels 更新。
+          pendingNewKey = { channelId: target, channelKey: r.json.channelKey };
+          refreshChannels("刷新列表");
+        } else {
+          handleApiFailure(r.resp, r.json, "重置 Channel Key");
+        }
+      })
+      .catch(function () {
+        setBusy(btnResetConfirm, false, "确认重置");
+        networkError();
+      });
+  });
+
+  // ---- 频道删除交互（03-03，D-34——前缀联动 GitHub 删仓库模式宽松变体） ----
+
+  /**
+   * 前缀联动：输入非空（value.length > 0）且为频道名前缀
+   * （name.startsWith(value)）时才启用删除按钮；初始与清空态 disabled。
+   */
+  function updateDeleteButtonState() {
+    if (pendingDelete === null) {
+      btnDeleteConfirm.disabled = true;
+      return;
+    }
+    var value = deleteNameInput.value;
+    btnDeleteConfirm.disabled = !(
+      value.length > 0 &&
+      pendingDelete.name.startsWith(value)
+    );
+  }
+
+  function openDeleteDialog(ch) {
+    pendingDelete = ch;
+    deleteDialogTitle.textContent = "删除频道「" + ch.name + "」";
+    deleteNameInput.value = "";
+    updateDeleteButtonState();
+    deleteDialog.showModal();
+  }
+
+  deleteNameInput.addEventListener("input", updateDeleteButtonState);
+
+  btnDeleteCancel.addEventListener("click", function () {
+    pendingDelete = null;
+    deleteDialog.close();
+  });
+  deleteDialog.addEventListener("cancel", function () {
+    pendingDelete = null;
+  });
+
+  btnDeleteConfirm.addEventListener("click", function () {
+    if (pendingDelete === null || btnDeleteConfirm.disabled) {
+      if (deleteDialog.open) {
+        deleteDialog.close();
+      }
+      return;
+    }
+    if (adminKey === null) {
+      pendingDelete = null;
+      deleteDialog.close();
+      return;
+    }
+    var target = pendingDelete;
+    pendingDelete = null;
+    deleteDialog.close();
+    setBusy(btnDeleteConfirm, true, "我已理解后果，删除频道");
+    hideErrorBar();
+    fetch("/api/admin/channels/" + encodeURIComponent(target.channelId), {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + adminKey },
+    })
+      .then(fetchJsonPair)
+      .then(function (r) {
+        setBusy(btnDeleteConfirm, false, "我已理解后果，删除频道");
+        if (r.resp.status === 204) {
+          // 频道从列表消失；详情回空态「在左侧选择一个频道查看详情。」
+          // （setChannels 对 selectedId 缺席频道的既有处理）。
+          // 已删频道的一次性展示数据一并弃。
+          if (
+            pendingSnippet !== null &&
+            pendingSnippet.channelId === target.channelId
+          ) {
+            pendingSnippet = null;
+          }
+          if (
+            pendingSendKeySnippet !== null &&
+            pendingSendKeySnippet.channelId === target.channelId
+          ) {
+            pendingSendKeySnippet = null;
+          }
+          if (
+            pendingNewKey !== null &&
+            pendingNewKey.channelId === target.channelId
+          ) {
+            pendingNewKey = null;
+          }
+          refreshChannels("刷新列表");
+        } else {
+          handleApiFailure(r.resp, r.json, "删除频道");
+        }
+      })
+      .catch(function () {
+        setBusy(btnDeleteConfirm, false, "我已理解后果，删除频道");
+        networkError();
+      });
+  });
+
   function setChannels(list) {
     channels = Array.isArray(list) ? list : [];
     if (selectedId !== null && findSelected() === null) {
@@ -832,12 +1071,32 @@
     pendingSnippet = null;
     pendingSendKeySnippet = null;
     pendingRevoke = null;
+    pendingReset = null;
+    pendingNewKey = null;
+    pendingDelete = null;
     if (revokeDialog.open) {
       revokeDialog.close();
+    }
+    if (resetDialog.open) {
+      resetDialog.close();
+    }
+    if (deleteDialog.open) {
+      deleteDialog.close();
     }
     hideErrorBar();
     enterLoginScreen();
   });
+
+  // ---- Destructive 确认框逐字契约（03-03，UI-SPEC D-33/D-34）----
+  // 文案由本文件 textContent 填充（token 契约单一来源；HTML 骨架零文案）。
+
+  resetDialogTitle.textContent = "重置 Channel Key？";
+  resetDialogBody.textContent =
+    "重置后该频道所有已连接的客户端将立即被断开，需用新密钥重新连接；旧密钥最长约 1 分钟后全局失效（边缘缓存窗口）。频道历史消息完整保留。";
+  deleteDialogBody.textContent =
+    "硬删除不可恢复：全部消息历史将被清空，Channel Key 与所有 Send Key 立即失效，所有连接立即断开。输入频道名称以确认：";
+  btnDeleteConfirm.textContent = "我已理解后果，删除频道";
+  deleteNameInput.placeholder = "输入频道名称的开头部分";
 
   // ---- 载入（D-28：有存储直接主界面并验证；无存储仅登录卡） ----
 

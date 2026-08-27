@@ -183,6 +183,22 @@
 
       /* 吊销按钮（destructive 保留清单第 2 项：红字文字按钮）。 */
       .revoke-btn { background: none; border: none; padding: 4px 8px; color: #c0392b; min-height: 24px; }
+      /* disabled 态文字 #9a9a9a（UI-SPEC 其他语义色：删除确认按钮初始禁用/请求进行中）。 */
+      .revoke-btn:disabled { color: #9a9a9a; }
+
+      /* 重置/删除交互（03-03，D-33/D-34）。 */
+      #btn-reset-channel-key { margin-top: 8px; }
+      #delete-name-input { display: block; width: 100%; margin-top: 8px; }
+      .danger-block { margin-top: 24px; padding-top: 16px; border-top: 1px solid canvastext; }
+      /* 60s 双活窗口提示条（#d9a300 注意/过渡语义——1px 边框式，非填充）。 */
+      .dual-window-hint {
+        border: 1px solid #d9a300;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 13.6px;
+        line-height: 1.45;
+        margin: 8px 0 0;
+      }
 
       /* 原生 dialog 确认框（UI-SPEC Interaction #3：零依赖焦点陷阱 + Esc 关闭）。 */
       dialog.confirm-dialog {
@@ -290,6 +306,37 @@
       <div class="dialog-actions">
         <button type="button" id="btn-revoke-cancel" class="text-btn">取消</button>
         <button type="button" id="btn-revoke-confirm" class="revoke-btn">确认吊销</button>
+      </div>
+    </dialog>
+
+    <!-- 重置 Channel Key 确认框（03-03，D-33）：逐字契约文案由 admin.js
+         textContent 填充（token 契约单一来源在 admin.js）；确认按钮红字
+         （destructive 保留清单第 3 项）。 -->
+    <dialog id="reset-dialog" class="confirm-dialog" aria-labelledby="reset-dialog-title">
+      <h2 id="reset-dialog-title"></h2>
+      <p id="reset-dialog-body" class="dialog-body"></p>
+      <div class="dialog-actions">
+        <button type="button" id="btn-reset-cancel" class="text-btn">取消</button>
+        <button type="button" id="btn-reset-confirm" class="revoke-btn">确认重置</button>
+      </div>
+    </dialog>
+
+    <!-- 删除频道确认框（03-03，D-34——GitHub 删仓库模式）：标题含频道名、
+         正文/按钮文案/placeholder 由 admin.js 填充；确认按钮初始 disabled，
+         前缀联动启用（联动逻辑在 admin.js）。 -->
+    <dialog id="delete-dialog" class="confirm-dialog" aria-labelledby="delete-dialog-title">
+      <h2 id="delete-dialog-title"></h2>
+      <p id="delete-dialog-body" class="dialog-body"></p>
+      <input
+        id="delete-name-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        maxlength="64"
+      />
+      <div class="dialog-actions">
+        <button type="button" id="btn-delete-cancel" class="text-btn">取消</button>
+        <button type="button" id="btn-delete-confirm" class="revoke-btn" disabled></button>
       </div>
     </dialog>
 
