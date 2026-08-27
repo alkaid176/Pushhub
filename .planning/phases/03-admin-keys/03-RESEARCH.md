@@ -548,18 +548,21 @@ private async handlePurge(): Promise<Response> {
 | A4 | 生产旧 `id:` 记录全部/绝大部分是冒烟频道（10+ 条），无用户自建频道 | Runtime State Inventory | normalize 兼容层保证任何旧格式频道照常可用，只是停留在单 Key 形态直到被管理操作触碰——零破坏 |
 | A5 | DO 内部路由命名（/kick-all、/history、/purge）与组合方式 | Pattern 3/4 | 纯实现细节，planner 可拆并（如 kick-all 独立于 purge） |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **rate_sends 清理的落点（D-32 字面 vs 每日 alarm 自然清扫）**
    - What we know: 吊销后该 sk: 键的 rate_sends 行无害（键名永不复用、36 字符随机）；每日 alarm 已清扫 `window_start` 早于 24h 的桶 [VERIFIED: packages/server/src/chat-room.ts:485-488]。
    - What's unclear: D-32 字面要求"对应清理"是否必须即时。
    - Recommendation: 加一个极小内部路由（或并入既有转发）即时 DELETE 一行——决策忠实度高、实现 <10 行；若 planner 判断过度，注释引用 alarm 清扫语义并记录偏差亦可接受。
+   - **RESOLVED:** 采纳即时清理——03-02-PLAN Task 1f 实现 DO `/cleanup-rate` 内部路由，吊销时即时 DELETE 对应行（planner 裁量记入决策）。
 2. **管理页路由路径（/admin.html vs /admin/index.html）**
    - What we know: assets 精确路径匹配；`public/` 文件不得以 api 前缀开头 [VERIFIED: wrangler.jsonc assets 注释]。
    - Recommendation: `/admin.html` 最简单（零嵌套）；若要 `/admin` 需目录 `admin/index.html`——planner 酌情，无技术风险。
+   - **RESOLVED:** 定为 `/admin.html`——03-01-PLAN 管理页骨架任务按 `packages/server/public/admin.html` 落位（零嵌套最简路径）。
 3. **E2E 组织位置**
    - What we know: web-sdk playwright.config 已含完整 webServer 编排；server 包无 playwright 依赖。
    - Recommendation: `packages/web-sdk/e2e/admin.spec.ts` 沿用（D-41"沿用 Phase 2 e2e/ 目录模式"字面一致）；不迁移配置（迁移是纯摩擦）。
+   - **RESOLVED:** 定为 `packages/web-sdk/e2e/admin.spec.ts`——03-01~03-05 各切片 E2E 均落此文件，复用既有 playwright.config webServer 编排。
 
 ## Environment Availability
 
