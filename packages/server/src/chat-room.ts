@@ -322,6 +322,16 @@ export class ChatRoom extends DurableObject {
     }
     await this.ctx.storage.deleteAll();
     await this.ctx.storage.deleteAlarm();
+    // WR-01：重建空表——deleteAll 清整库后驻留内存的 DO 不会重跑构造器
+    //（DDL 仅构造器执行），而 KV 侧 sk:/ch: 删除有 ≤60s 边缘缓存窗口：
+    // 窗口内残留的 publish/ws 流量（resolveSendKey/resolveChannelKey 命中
+    // 缓存、Worker 照常转发）会直接命中 "no such table" 未捕获异常 → 裸
+    // 500。重建（CREATE TABLE IF NOT EXISTS 幂等）后残留流量得到空频道
+    // 行为而非异常；缓存过期后恢复 Worker 层干净 401。
+    // 已知残留（文档化）：窗口内残留 publish 成功落库会重设 alarm——空 DO
+    // 每日唤醒一次（清理空表 no-op），额度影响可忽略。
+    this.ctx.storage.sql.exec(CREATE_MESSAGES_DDL);
+    this.ctx.storage.sql.exec(CREATE_RATE_SENDS_DDL);
     return new Response(JSON.stringify({ kicked }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
