@@ -112,7 +112,7 @@ Plans:
   3. 管理页可按频道浏览消息历史（含回复状态），作为排障入口
   4. 管理页与测试页均由 Worker 静态资源托管，浏览器访问不产生 Worker 请求调用（dashboard 可验证）
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans executed
 Plans:
 **Wave 1**
 
@@ -132,7 +132,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 03-05-PLAN.md — D-41 全链路 journey E2E + 生产部署 0.1.11（冒烟 + /admin.html 资产对照 + normalize 生产实证）+ 用户人工验收（SC4 dashboard + 删除 dogfooding）
+- [x] 03-05-PLAN.md — D-41 全链路 journey E2E + 生产部署 0.1.11（冒烟 + /admin.html 资产对照 + normalize 生产实证）+ 用户人工验收（SC4 dashboard + 删除 dogfooding）
 
 **Research note**: deleteAll() 必须与 deleteAlarm() 成对（僵尸 DO 风险）；schema 演进走 normalize 兼容读取不写迁移脚本
 **UI hint**: yes
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
 | 2. Web SDK 参考客户端 | 6/6 | Complete    | 2026-08-27 |
-| 3. 管理页与密钥生命周期 | 4/5 | In Progress|  |
+| 3. 管理页与密钥生命周期 | 5/5 | In Progress|  |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |
 | 5. Windows 桌面客户端（Tauri 2） | 0/TBD | Not started | - |
 | 6. 安卓客户端（原生 Kotlin） | 0/TBD | Not started | - |

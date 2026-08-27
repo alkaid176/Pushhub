@@ -20,9 +20,9 @@ Requirements for initial release. Each maps to roadmap phases.
 ### 密钥与安全
 
 - [x] **KEY-01**: 三级密钥体系：Admin Key（管理操作）、Send Key（只发送）、Channel Key（接收+回复）
-- [ ] **KEY-02**: Web 管理页（Admin Key 登录）可创建/删除/重置频道及其密钥
-- [ ] **KEY-03**: 每频道可创建多个 Send Key，可单独吊销——不同脚本/系统用不同 Key，泄露不互伤
-- [ ] **KEY-04**: 任一级密钥可单独重置，重置后旧密钥立即失效（Channel Key 重置不丢失频道历史）
+- [x] **KEY-02**: Web 管理页（Admin Key 登录）可创建/删除/重置频道及其密钥
+- [x] **KEY-03**: 每频道可创建多个 Send Key，可单独吊销——不同脚本/系统用不同 Key，泄露不互伤
+- [x] **KEY-04**: 任一级密钥可单独重置，重置后旧密钥立即失效（Channel Key 重置不丢失频道历史）
 - [x] **KEY-05**: 每 Send Key 每分钟限发 30 条（可配置），超限返回 429
 - [ ] **KEY-06**: 回调请求带 PushHub-Message-Id 与签名头，发送方可验签防伪造回调
 
@@ -62,11 +62,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 管理页与测试页
 
-- [ ] **ADM-01**: 管理页：Admin Key 登录，频道列表/创建/删除
-- [ ] **ADM-02**: 管理页：密钥管理（查看/重置/吊销 Send Key、重置 Channel Key）
-- [ ] **ADM-03**: 管理页：频道消息历史查看（排障用）
+- [x] **ADM-01**: 管理页：Admin Key 登录，频道列表/创建/删除
+- [x] **ADM-02**: 管理页：密钥管理（查看/重置/吊销 Send Key、重置 Channel Key）
+- [x] **ADM-03**: 管理页：频道消息历史查看（排障用）
 - [ ] **ADM-04**: 测试页：可视化发消息（构造 title/body/options/callback_url）、看实时消息流、发起回复——三端联调与协议排障工具
-- [ ] **ADM-05**: 管理页与测试页由 Worker 静态资源托管（免费、不占请求额度）
+- [x] **ADM-05**: 管理页与测试页由 Worker 静态资源托管（免费、不占请求额度）
 
 ## v2 Requirements
 
@@ -123,13 +123,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WEB-02 | Phase 2 | Complete |
 | WEB-04 | Phase 2 | Complete |
 | WEB-05 | Phase 2 | Complete |
-| KEY-02 | Phase 3 | Pending |
-| KEY-03 | Phase 3 | Pending |
-| KEY-04 | Phase 3 | Pending |
-| ADM-01 | Phase 3 | Pending |
-| ADM-02 | Phase 3 | Pending |
-| ADM-03 | Phase 3 | Pending |
-| ADM-05 | Phase 3 | Pending |
+| KEY-02 | Phase 3 | Complete |
+| KEY-03 | Phase 3 | Complete |
+| KEY-04 | Phase 3 | Complete |
+| ADM-01 | Phase 3 | Complete |
+| ADM-02 | Phase 3 | Complete |
+| ADM-03 | Phase 3 | Complete |
+| ADM-05 | Phase 3 | Complete |
 | RPL-01 | Phase 4 | Pending |
 | RPL-02 | Phase 4 | Pending |
 | RPL-03 | Phase 4 | Pending |
