@@ -321,6 +321,12 @@ export async function listChannels(
       });
       if (stored !== null) {
         const normalized = normalizeIdRecord(stored);
+        // WR-05：损坏记录（channelKey 缺失或非非空字符串——手工种键/半写
+        // 损坏）不进列表——管理页 renderDetail -> buildKeyRow(undefined) ->
+        // maskKey 的 key.slice 直接抛 TypeError，详情面板不可达即不可崩。
+        if (typeof normalized.channelKey !== "string" || normalized.channelKey === "") {
+          continue;
+        }
         const channelId = key.name.slice(KEY_PREFIX_ID.length);
         records.push({
           channelId,
