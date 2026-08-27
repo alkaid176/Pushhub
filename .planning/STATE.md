@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 02
 current_phase_name: Web SDK 参考客户端
 status: executing
-stopped_at: Completed 02-04-PLAN.md (G-02-2 + WR-02/WR-04 gap closure)
-last_updated: "2026-08-27T12:52:47.470Z"
+stopped_at: Completed 02-05-PLAN.md (G-02-3 + WR-03 gap closure)
+last_updated: "2026-08-27T13:07:38.841Z"
 last_activity: 2026-08-27
 last_activity_desc: Phase 02 execution started
-state_head: dc9342dcce9cb630aa294bd91d9c5eccb45236da
+state_head: eeda30ddba3bdd39e4ca09f5e967c382f993bee5
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 02 (Web SDK 参考客户端) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-08-27 — Phase 02 execution started
 
@@ -67,6 +67,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 02 P02 | 64min | 3 tasks | 15 files |
 | Phase 02 P03 | 32min | 3 tasks | 8 files |
 | Phase 02 P04 | 7min | 2 tasks | 6 files |
+| Phase 02 P05 | 10min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,9 @@ Recent decisions affecting current work:
 - [Phase 2]: [Phase 02] 02-03 SC4 tail 被 DNS 污染阻断：server 加 x-ph-worker 响应标记头作等价程序化证据（资产无头/Worker 有头），dashboard 人工核对保留 end-of-phase 批量
 - [Phase 2]: [Phase 02] 02-03 生产部署混沌 CHAOS PASS：0.1.7→0.1.8 断连后 10.7s 自动恢复恰补 2 条零重复（chaos-sc2.mjs 一次性 harness）
 - [Phase 2]: [Phase 02] 02-03 ?v= 缓存参数语义 = 产物内容最近变更时的部署版本号（README 契约化）
+- [Phase 02]: [Phase 02] 02-05 G-02-3 机制化闭合：build.mjs 构建期注入根版本号到 index.html ?v=（恰一次硬断言，0/多命中即构建失败——实证 exit 1）+ cache-bust-sync.test.ts 恒一致双保险；人工同步纪律作废
+- [Phase 02]: [Phase 02] 02-05 类型缺失最小侵入：工作区无 @types/node（tsc 范围内首个 node: 消费者），行级 @ts-expect-error 集中 import 区而非新增 devDependency（项目有新包用户审批先例）
+- [Phase 02]: [Phase 02] 02-05 WR-03 闭合：viewer localStorage 读取侧 try/catch 对齐写入侧——存储全禁环境 server 回退 origin、key 留空，E2E addInitScript 重定义 getter 真浏览器验证
 
 ### Pending Todos
 
@@ -124,6 +128,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-27T12:52:47.220Z
-Stopped at: Completed 02-04-PLAN.md (G-02-2 + WR-02/WR-04 gap closure)
+Last session: 2026-08-27T13:07:38.580Z
+Stopped at: Completed 02-05-PLAN.md (G-02-3 + WR-03 gap closure)
 Resume file: None
