@@ -1,9 +1,10 @@
 ---
-status: diagnosed
+status: closed
 phase: 02-web-sdk
 source: [02-VERIFICATION.md]
 started: 2026-08-26T17:42:43Z
-updated: 2026-08-27T00:00:00Z
+updated: 2026-08-27T14:10:00Z
+closure: "G-02-2/G-02-3/G-02-4 由 02-04/02-05/02-06 闭合（生产 0.1.9），追加 CR-01 FORBID_ATTR 修复（生产 0.1.10）；02-VERIFICATION.md 12/12 must-haves passed"
 ---
 
 ## Current Test
@@ -53,7 +54,8 @@ blocked: 0
 
 - gap_id: G-02-2
   truth: "SVG 命名空间锚点（tagName 小写 'a'）与 HTML 锚点同等携带 target=_blank / rel=noopener noreferrer（D-21 加固不可绕过）"
-  status: failed
+  status: closed
+  closed_by: 02-04（df81d41 两分支判定 + fixture），生产实证 0.1.9+
   reason: "User reported: 修复——裁决执行两行修复 + fixture 增补"
   severity: major
   test: 2
@@ -67,7 +69,8 @@ blocked: 0
 
 - gap_id: G-02-3
   truth: "index.html ?v= 缓存参数与根 package.json version 恒一致（机制保证，非人工纪律）"
-  status: failed
+  status: closed
+  closed_by: 02-05（d4c0c63 build.mjs 注入 + cache-bust-sync 恒一致断言），生产实证 0.1.9/0.1.10 连续两次
   reason: "User reported: 机制化——裁决 build.mjs 构建期自动注入根版本号并同步修正 chaos-sc2.mjs 硬编码日志"
   severity: major
   test: 3
@@ -83,7 +86,8 @@ blocked: 0
 
 - gap_id: G-02-4
   truth: "三项加固落地：DOMPurify 放行面收敛、viewer localStorage 读取防护、畸形 serverUrl 不卡 UI"
-  status: failed
+  status: closed
+  closed_by: 02-04（WR-02 FORBID_TAGS df81d41 + WR-04 WS_FAIL 519b33f）+ 02-05（WR-03 d30d439）+ 追加 CR-01 FORBID_ATTR 收敛（9e7cfc8，生产 0.1.10）
   reason: "User reported: 批次修复——三项加固与 G-02-2/G-02-3 同批执行"
   severity: minor
   test: 4
