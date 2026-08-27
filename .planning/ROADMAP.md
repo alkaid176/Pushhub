@@ -112,7 +112,7 @@ Plans:
   3. 管理页可按频道浏览消息历史（含回复状态），作为排障入口
   4. 管理页与测试页均由 Worker 静态资源托管，浏览器访问不产生 Worker 请求调用（dashboard 可验证）
 
-**Plans**: 1/5 plans executed
+**Plans**: 2/5 plans executed
 Plans:
 **Wave 1**
 
@@ -120,7 +120,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Send Key 全生命周期（参数化路由 + label/上限 10 + 吊销三存储联动 + DO /cleanup-rate + 管理页密钥管理区 + E2E 切片二）
+- [x] 03-02-PLAN.md — Send Key 全生命周期（参数化路由 + label/上限 10 + 吊销三存储联动 + DO /cleanup-rate + 管理页密钥管理区 + E2E 切片二）
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
 | 2. Web SDK 参考客户端 | 6/6 | Complete    | 2026-08-27 |
-| 3. 管理页与密钥生命周期 | 1/5 | In Progress|  |
+| 3. 管理页与密钥生命周期 | 2/5 | In Progress|  |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |
 | 5. Windows 桌面客户端（Tauri 2） | 0/TBD | Not started | - |
 | 6. 安卓客户端（原生 Kotlin） | 0/TBD | Not started | - |
