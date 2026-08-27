@@ -20,11 +20,17 @@
  *  - 频道删除（03-03，D-34 硬删除）：确认框前缀联动（输入非空且为频道名前缀
  *    才启用——GitHub 删仓库模式宽松变体）→ DELETE 204 → 列表移除 + 详情
  *    回空态。
+ *  - 消息历史（03-04，D-40 排障视图）：详情面板 <details> 折叠区首展懒加载；
+ *    seq 倒序渲染（#seq/时间 mono + title 加粗 + answered 徽标）+「加载更多」
+ *    before 游标翻页 + 清理分隔线（oldest_kept_seq > 1）+ 空态文案。
  *
  * 安全纪律：
- *  - 全文件零 innerHTML——频道名/标签/日期/密钥/错误消息/确认框文案一律
- *    textContent（T-03-02/T-03-09）；眼睛图标经 <template> 克隆（inline SVG
- *    是标记非脚本，CSP 兼容）。
+ *  - 消息正文是全文件唯一经 window.PushHub.renderMarkdown 消毒管道写 DOM 的
+ *    入口（T-03-16，与 viewer 同款唯一管道纪律——构建期硬断言全文件恰 1 处，
+ *    见 03-04 验证链）；其余一切用户可控字符串（频道名/标签/日期/密钥/错误
+ *    消息/确认框文案/历史头部 #seq/时间/标题/徽标文本）一律 textContent
+ *    （T-03-02/T-03-09）；眼睛图标经 <template> 克隆（inline SVG 是标记非
+ *    脚本，CSP 兼容）。
  *  - 全部 API 同源相对路径 + Authorization: Bearer 头（无 CORS/CSRF 面）；
  *    鉴权经服务端 checkAdminAuth（T-03-01），本页不新增路由。
  *  - localStorage 键 pushhub.admin（独立于 viewer 两键），读写均 try/catch
@@ -250,7 +256,7 @@
 
   /**
    * 眼睛揭示按钮（D-29，Channel Key 行与 Send Key 行共用）：点击切换目标
-   * value 元素的掩码/明文（textContent 切换，禁 innerHTML 写密钥）；揭示态
+   * value 元素的掩码/明文（textContent 切换，绝不经标记注入路径写密钥）；揭示态
    * 不跨刷新/跨选择持久（随行销毁的组件局部状态）。
    */
   function buildEyeButton(valueEl, key) {
@@ -582,6 +588,9 @@
 
     channelDetail.appendChild(buildSendKeysBlock(ch));
 
+    // 消息历史折叠区（03-04，D-40）：懒加载 <details>——首次展开才 GET messages。
+    channelDetail.appendChild(buildHistoryBlock(ch));
+
     // 删除频道（D-34 硬删除，destructive 保留清单第 1 项：详情面板底部红按钮）。
     var danger = document.createElement("section");
     danger.className = "danger-block";
@@ -693,6 +702,250 @@
       block.appendChild(row);
     });
     return block;
+  }
+
+  // ---- 消息历史折叠区（03-04，D-40 + UI-SPEC Interaction #4）----
+
+  /** 历史空态文案（UI-SPEC Copywriting 补充文案表，逐字）。 */
+  var HISTORY_EMPTY_TEXT =
+    "该频道还没有消息——Webhook 发送第一条消息后会显示在这里。";
+  /** 清理分隔线文案（同 viewer D-10 分隔线，逐字）。 */
+  var HISTORY_SEPARATOR_TEXT = "—— 更早的消息已被清理 ——";
+
+  /**
+   * 历史区状态（随频道切换重置；同频道重渲染——refreshChannels 后
+   * renderDetail 重建 DOM——保留已加载页，消息从本状态重放）。
+   */
+  var historyState = null;
+
+  function resetHistoryState(channelId) {
+    historyState = {
+      channelId: channelId,
+      loaded: false,
+      loading: false,
+      messages: [], // 已加载消息（API 返回序——倒序，最新在前）
+      hasMore: false,
+      oldestKept: 0,
+    };
+  }
+
+  function ensureHistoryState(channelId) {
+    if (historyState === null || historyState.channelId !== channelId) {
+      resetHistoryState(channelId);
+    }
+    return historyState;
+  }
+
+  /**
+   * 单条历史消息渲染（倒序即 API 返回序，最新在最上——直接 appendChild）：
+   * 头部 = #seq（mono）+ 时间（mono graytext）+ title（如有则 strong
+   * textContent；无 title 不渲染标题行——viewer appendMessage 同款）+
+   * answered 徽标双态（true → 「已回复」绿样式 / false → 「未回复」graytext
+   * 样式；本期恒 false，绿样式 Phase 4 复用）；正文 = renderMarkdown 消毒
+   * 管道（全管理页唯一该类入口，T-03-16）。
+   */
+  function buildHistoryMessage(m) {
+    var item = document.createElement("div");
+    item.className = "hist-msg";
+    item.setAttribute("data-testid", "history-msg");
+
+    var head = document.createElement("div");
+    head.className = "hist-msg-head";
+    var seq = document.createElement("span");
+    seq.className = "mono hist-seq";
+    seq.textContent = "#" + m.seq;
+    head.appendChild(seq);
+    var time = document.createElement("time");
+    time.className = "mono hist-time";
+    time.textContent = new Date(m.created_at).toLocaleTimeString();
+    head.appendChild(time);
+    if (m.title) {
+      var title = document.createElement("strong");
+      title.className = "hist-title";
+      title.textContent = m.title;
+      head.appendChild(title);
+    }
+    var badge = document.createElement("span");
+    badge.className =
+      m.answered === true ? "badge-answered" : "badge-unanswered";
+    badge.textContent = m.answered === true ? "已回复" : "未回复";
+    head.appendChild(badge);
+    item.appendChild(head);
+
+    var body = document.createElement("div");
+    body.className = "hist-msg-body";
+    body.innerHTML = window.PushHub.renderMarkdown(m.text);
+    item.appendChild(body);
+    return item;
+  }
+
+  /**
+   * 历史列表整体渲染（首拉完成后与翻页追加后统一入口——从状态重放，同频道
+   * 重渲染亦走此处）：
+   *  - 未加载：空容器（首展 toggle 时才发起请求）；
+   *  - 空（首拉 messages 空数组且未加载过更多）：空态文案；
+   *  - 有消息：倒序渲染；has_more=true → 显示「加载更多」；has_more=false →
+   *    隐藏按钮，且 oldest_kept_seq > 1 时列表底部渲染清理分隔线（viewer
+   *    maybeSeparator 同款判定：oldest_kept_seq <= 1 等价从未清理不渲染——
+   *    D-10 诚实缺口，不虚构不存在的缺口；每频道每次展开至多一条）。
+   */
+  function renderHistoryInto(list, moreBtn, state) {
+    list.textContent = "";
+    moreBtn.hidden = true;
+    if (!state.loaded) {
+      return;
+    }
+    if (state.messages.length === 0) {
+      var empty = document.createElement("p");
+      empty.className = "history-empty";
+      empty.textContent = HISTORY_EMPTY_TEXT;
+      list.appendChild(empty);
+      return;
+    }
+    state.messages.forEach(function (m) {
+      list.appendChild(buildHistoryMessage(m));
+    });
+    if (state.hasMore) {
+      moreBtn.hidden = false;
+    } else if (state.oldestKept > 1) {
+      var sep = document.createElement("p");
+      sep.className = "history-separator";
+      sep.textContent = HISTORY_SEPARATOR_TEXT;
+      list.appendChild(sep);
+    }
+  }
+
+  /**
+   * 历史折叠区块（renderDetail 组装）：summary「消息历史（排障）」+
+   * #history-list（独立滚动）+ #btn-history-more。首展 toggle 懒加载（未
+   * 加载且未在途才发起）；「加载更多」带 before=当前已渲染列表最小 seq。
+   */
+  function buildHistoryBlock(ch) {
+    var state = ensureHistoryState(ch.channelId);
+    var details = document.createElement("details");
+    details.className = "history-block";
+    details.id = "history-details";
+    var summary = document.createElement("summary");
+    summary.textContent = "消息历史（排障）";
+    details.appendChild(summary);
+
+    var list = document.createElement("div");
+    list.id = "history-list";
+    list.className = "history-list";
+    details.appendChild(list);
+
+    var more = document.createElement("button");
+    more.type = "button";
+    more.id = "btn-history-more";
+    more.className = "history-more-btn";
+    more.textContent = "加载更多";
+    more.hidden = true;
+    details.appendChild(more);
+
+    details.addEventListener("toggle", function () {
+      if (details.open && !state.loaded && !state.loading) {
+        loadHistory(ch.channelId, null);
+      }
+    });
+    more.addEventListener("click", function () {
+      if (state.loading) return;
+      var minSeq = null;
+      for (var i = 0; i < state.messages.length; i++) {
+        var s = state.messages[i].seq;
+        if (typeof s === "number" && (minSeq === null || s < minSeq)) {
+          minSeq = s;
+        }
+      }
+      if (minSeq === null) return;
+      loadHistory(ch.channelId, minSeq);
+    });
+
+    // 同频道重渲染：从状态重放已加载页（首展前则保持空容器）。
+    renderHistoryInto(list, more, state);
+    return details;
+  }
+
+  /**
+   * 历史页加载（before === null 首页 / 否则游标翻页）：
+   *  - SDK 缺失前置检查：无 window.PushHub.renderMarkdown 时错误条提示且
+   *    不发起请求（消息正文无消毒管道可渲染——错误且不抛异常，(g)）；
+   *  - 请求期间「加载更多」disabled + 「加载中…」；首页在列表区文本占位；
+   *  - 迟到响应防御：回调时频道已切换则丢弃（不渲染进新频道）；
+   *  - 错误走既有错误条（handleApiFailure：401 特例清存储回登录；信封
+   *    code/message 透传）。
+   */
+  function loadHistory(channelId, before) {
+    if (adminKey === null) return;
+    var state = ensureHistoryState(channelId);
+    if (
+      !window.PushHub ||
+      typeof window.PushHub.renderMarkdown !== "function"
+    ) {
+      showErrorBar("消息渲染组件（pushhub.js）加载失败，请刷新页面重试。");
+      return;
+    }
+    state.loading = true;
+    hideErrorBar();
+    var moreBtn = document.getElementById("btn-history-more");
+    if (before === null) {
+      var listEl = document.getElementById("history-list");
+      if (listEl !== null) {
+        listEl.textContent = "";
+        var loading = document.createElement("p");
+        loading.className = "history-status";
+        loading.textContent = "加载中…";
+        listEl.appendChild(loading);
+      }
+    } else if (moreBtn !== null) {
+      setBusy(moreBtn, true, "加载更多");
+    }
+    var query =
+      before === null ? "" : "?before=" + encodeURIComponent(before);
+    fetch(
+      "/api/admin/channels/" +
+        encodeURIComponent(channelId) +
+        "/messages" +
+        query,
+      { headers: { Authorization: "Bearer " + adminKey } },
+    )
+      .then(fetchJsonPair)
+      .then(function (r) {
+        state.loading = false;
+        if (moreBtn !== null) {
+          setBusy(moreBtn, false, "加载更多");
+        }
+        if (
+          r.resp.status === 200 &&
+          r.json &&
+          Array.isArray(r.json.messages)
+        ) {
+          // 频道已切换：迟到响应丢弃。
+          if (historyState === null || historyState.channelId !== channelId) {
+            return;
+          }
+          state.loaded = true;
+          state.messages = state.messages.concat(r.json.messages);
+          state.hasMore = r.json.has_more === true;
+          state.oldestKept =
+            typeof r.json.oldest_kept_seq === "number"
+              ? r.json.oldest_kept_seq
+              : 0;
+          var list = document.getElementById("history-list");
+          var more = document.getElementById("btn-history-more");
+          if (list !== null && more !== null) {
+            renderHistoryInto(list, more, state);
+          }
+        } else {
+          handleApiFailure(r.resp, r.json, "加载消息历史");
+        }
+      })
+      .catch(function () {
+        state.loading = false;
+        if (moreBtn !== null) {
+          setBusy(moreBtn, false, "加载更多");
+        }
+        networkError();
+      });
   }
 
   // ---- Send Key 创建/吊销交互（03-02） ----
@@ -1074,6 +1327,7 @@
     pendingReset = null;
     pendingNewKey = null;
     pendingDelete = null;
+    historyState = null;
     if (revokeDialog.open) {
       revokeDialog.close();
     }
