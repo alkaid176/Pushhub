@@ -24,6 +24,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 // @ts-expect-error -- 工作区未装 @types/node（见头部"类型注"）
 import { fileURLToPath } from "node:url";
+// @ts-expect-error -- 工作区未装 @types/node（见头部"类型注"；execPath 取代 process 全局名）
+import { execPath } from "node:process";
 import { describe, it, expect } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -50,7 +52,7 @@ describe("?v= 缓存参数与根 version 恒一致（G-02-3）", () => {
 
   it("机制生效：执行一次构建后断言仍成立（注入幂等，重复构建不漂移）", () => {
     // 真实走 build.mjs 全链路（esbuild → copy → 注入），构建输出 pipe 吞掉。
-    execFileSync(process.execPath, [buildScriptPath], { stdio: "pipe" });
+    execFileSync(execPath, [buildScriptPath], { stdio: "pipe" });
     const values = refValues(readFileSync(indexHtmlPath, "utf8"));
     expect(values.length).toBe(1);
     expect(values[0]).toBe(rootPkg.version);
