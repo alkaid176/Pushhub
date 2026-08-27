@@ -57,6 +57,7 @@ blocked: 0
   reason: "User reported: 修复——裁决执行两行修复 + fixture 增补"
   severity: major
   test: 2
+  root_cause: "render-markdown.ts afterSanitizeAttributes 钩子判定 node.tagName === 'A' 大小写敏感——HTML 命名空间 tagName 为大写 'A'，SVG 命名空间为小写 'a'，SVG 锚点落入 else 分支不设 target/rel（D-21 加固可绕过；XSS 主防线不受影响）"
   artifacts:
     - path: "packages/web-sdk/src/render/render-markdown.ts"
       issue: "afterSanitizeAttributes 判定 node.tagName === 'A' 大小写敏感，SVG 命名空间锚点（小写 'a'）绕过 D-21 强制新窗口"
@@ -70,6 +71,7 @@ blocked: 0
   reason: "User reported: 机制化——裁决 build.mjs 构建期自动注入根版本号并同步修正 chaos-sc2.mjs 硬编码日志"
   severity: major
   test: 3
+  root_cause: "?v= 版本号为 index.html 手工硬编码，与根 package.json version 无机制关联——版本推进依赖人工同步（0.1.8 时遗漏），未来 SDK 字节变更时会命中 stale 缓存"
   artifacts:
     - path: "packages/server/public/index.html"
       issue: "line 130 ?v=0.1.7 硬编码，与根版本 0.1.8 脱钩，未来产物变更时存在 stale 缓存机制性风险"
@@ -85,6 +87,7 @@ blocked: 0
   reason: "User reported: 批次修复——三项加固与 G-02-2/G-02-3 同批执行"
   severity: minor
   test: 4
+  root_cause: "WR-02: DOMPurify 未配置 FORBID_TAGS，默认 profile 放行 form/input/button 等非聊天语义标签；WR-03: viewer.js localStorage 读取无 try/catch（写入侧有），存储全禁环境抛未捕获异常；WR-04: pushhub.ts 构造函数 new URL(serverUrl) 对畸形输入同步抛异常且无 emitError 路径，查看器 UI 停留'连接中'"
   artifacts:
     - path: "packages/web-sdk/src/render/render-markdown.ts"
       issue: "WR-02：DOMPurify 使用默认 profile，style/form/input/button 等标签默认放行（广度攻击面）"
