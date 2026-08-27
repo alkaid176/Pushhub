@@ -112,7 +112,29 @@ Plans:
   3. 管理页可按频道浏览消息历史（含回复状态），作为排障入口
   4. 管理页与测试页均由 Worker 静态资源托管，浏览器访问不产生 Worker 请求调用（dashboard 可验证）
 
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Tracer：管理页骨架端到端（id:/sk: schema 演进 + 四消费方联动 + 登录/创建/列表/接入片段卡 + build.mjs ?v= 扩展 + E2E 切片一含 SC4 标记头）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Send Key 全生命周期（参数化路由 + label/上限 10 + 吊销三存储联动 + DO /cleanup-rate + 管理页密钥管理区 + E2E 切片二）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-03-PLAN.md — Channel Key 重置踢连 + 频道删除（DO /kick-all + /purge 成对清理 + 编排顺序定稿 + 逐字确认框 UI + E2E 切片三 viewer 双页踢连观察）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 03-04-PLAN.md — 消息历史排障（DO GET /history keyset 倒序 + Worker 转发 + renderMarkdown 历史视图 + answered 徽标 + E2E 切片四消毒断言）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 03-05-PLAN.md — D-41 全链路 journey E2E + 生产部署 0.1.11（冒烟 + /admin.html 资产对照 + normalize 生产实证）+ 用户人工验收（SC4 dashboard + 删除 dogfooding）
+
+**Research note**: deleteAll() 必须与 deleteAlarm() 成对（僵尸 DO 风险）；schema 演进走 normalize 兼容读取不写迁移脚本
 **UI hint**: yes
 
 ### Phase 4: 回复链与回调送达
@@ -175,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
 | 2. Web SDK 参考客户端 | 6/6 | Complete    | 2026-08-27 |
-| 3. 管理页与密钥生命周期 | 0/TBD | Not started | - |
+| 3. 管理页与密钥生命周期 | 0/5 | Not started | - |
 | 4. 回复链与回调送达 | 0/TBD | Not started | - |
 | 5. Windows 桌面客户端（Tauri 2） | 0/TBD | Not started | - |
 | 6. 安卓客户端（原生 Kotlin） | 0/TBD | Not started | - |
