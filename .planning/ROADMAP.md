@@ -73,7 +73,7 @@ Plans:
   3. 含 `<script>`、`<img onerror>` 等攻击样本的消息经 SDK 渲染辅助输出安全 HTML（marked + DOMPurify 消毒），攻击样本 fixture 回归通过；宿主页面也可选择只接收原始数据自行渲染
   4. pushhub.js 由 Worker 静态资产从服务端域名直接分发，浏览器引入即可用，不产生 Worker 请求计费
 
-**Plans**: 3/3 plans executed
+**Plans**: 6 plans (3 executed + 3 gap closure from 02-UAT.md G-02-2/G-02-3/G-02-4)
 Plans:
 **Wave 1**
 
@@ -86,6 +86,15 @@ Plans:
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [x] 02-03-PLAN.md — Demo 查看器（D-22/D-23/D-24）+ SDK API 文档（README）+ 生产四标准终验（SC4 资产命中零计费 + SC2 部署混沌 0.1.7/0.1.8）
+
+**Wave 4** *(gap closure — G-02-2/G-02-3/G-02-4，Wave 1-3 之后)*
+
+- [ ] 02-04-PLAN.md — Gap 修复（SDK 层）：SVG 锚点两分支判定（G-02-2）+ DOMPurify FORBID_TAGS 收敛（WR-02）+ 畸形 serverUrl 容错 WS_FAIL（WR-04）
+- [ ] 02-05-PLAN.md — Gap 修复（机制层）：build.mjs 构建期注入根版本号到 index.html ?v=（G-02-3）+ chaos 日志去硬编码 + viewer localStorage 读取防护（WR-03）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 02-06-PLAN.md — 集成回归（server 60 例 + web-sdk 单测 + E2E 两条新用例）+ 部署 0.1.9 + 生产逐字节/标记头验证 + DEPLOY.md 登记
 
 **Research note**: 建议带研究复查（测试栈主题同 Phase 1）；iOS Safari 后台冻结的 visibilitychange 恢复路径需真机验证
 **UI hint**: yes
