@@ -231,3 +231,34 @@ test("WR-03：localStorage 全禁环境查看器正常加载（回退缺省，�
   expect(await page.locator("#status-text").textContent()).toBe("未连接");
   expect(pageErrors).toEqual([]);
 });
+
+test("WR-04：畸形 serverUrl 查看器呈现 error 态（不卡连接中）", async ({ page }) => {
+  // SDK 侧修复已由 02-04 就位（openSocket try/catch + WS_FAIL 延迟一跳
+  // 派发）；本用例验证查看器端到端形态——归 02-06 而非 02-04，因
+  // viewer.spec.ts 与 02-05 同文件必须错 wave。
+  //
+  // 输入注（执行期实证修正，SUMMARY 记偏差）：计划的字面输入 "not a url"
+  // 在真实浏览器不触发构造抛出——WebSocket 构造器会把相对引用按页面
+  // base URL 解析（同源 new WebSocket("/path") 特性），"not a url/…"
+  // 被合法化为 ws://<origin>/not%20a%20url/… → 握手 404 → 意外断连重连
+  // 循环（jsdom 无 base 解析才同步抛 SyntaxError——单测与真浏览器分歧）。
+  // 改用硬解析失败形态：截断的 IPv6 字面量（未闭合 "["），构造器同步抛
+  // → WS_FAIL → error(fatal, connect_failed) + offline。
+  const viewerUrl = `/?server=${encodeURIComponent("https://[::1")}&key=phc_${"k".repeat(32)}`;
+  await page.goto(viewerUrl);
+
+  // error 事件经 setTimeout(0) 延迟派发（构造即连 D-18 时序下宿主监听先
+  // 挂）：error-bar 可见、含"致命错误"（showError 的 fatal 标签）与
+  // connect_failed（WS_FAIL 唯一 code 来源——区分于其他错误路径）。
+  await expect(page.locator("#error-bar")).toBeVisible();
+  await expect(page.locator("#error-bar")).toContainText("致命错误");
+  await expect(page.locator("#error-bar")).toContainText("connect_failed");
+
+  // 状态最终为"已断开"（fatal 语义：offline 且不重连）；waitForFunction
+  // 轮询吸收 0ms 延迟派发的时序。
+  await page.waitForFunction(
+    () => document.getElementById("status-text")?.textContent === "已断开",
+    null,
+    { timeout: 5_000 },
+  );
+});
