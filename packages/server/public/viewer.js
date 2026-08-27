@@ -195,8 +195,14 @@
   var params = new URLSearchParams(window.location.search);
   var urlServer = params.get("server");
   var urlKey = params.get("key");
-  serverInput.value = urlServer || window.localStorage.getItem(LS_SERVER) || window.location.origin;
-  keyInput.value = urlKey || window.localStorage.getItem(LS_KEY) || "";
+  try {
+    serverInput.value = urlServer || window.localStorage.getItem(LS_SERVER) || window.location.origin;
+    keyInput.value = urlKey || window.localStorage.getItem(LS_KEY) || "";
+  } catch (e) {
+    // localStorage 不可用（隐私模式等）——免填功能降级：server 回退页面 origin、key 留空。
+    serverInput.value = urlServer || window.location.origin;
+    keyInput.value = urlKey || "";
+  }
   if (urlServer && urlKey) {
     connect(urlServer, urlKey);
   }
