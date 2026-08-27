@@ -7,7 +7,9 @@
  *   GET  /api/admin/channels                            列频道 -> 200 {channels: [ChannelRecord...]}
  *   POST /api/admin/channels/:channelId/send-keys       建 Send Key -> 201 {key, label, createdAt}（03-02，D-30/D-31）
  *   DELETE /api/admin/channels/:channelId/send-keys/:key 吊销 -> 204（03-02，D-32）
- *   参数化骨架的 reset-channel-key / messages / DELETE 频道分支占位 404（后续 plan 扩展）
+ *   POST /api/admin/channels/:channelId/reset-channel-key 重置 Channel Key -> 201 {channelKey}（03-03，D-33——KV 写先 DO 踢后）
+ *   DELETE /api/admin/channels/:channelId               删除频道 -> 204（03-03，D-34——DO purge 先 KV 键删后，one-way）
+ *   参数化骨架的 messages 分支占位 404（03-04 扩展）
  *
  * Admin Key 鉴权（D-13）：Authorization: Bearer <ADMIN_KEY>（Worker secret，
  * wrangler secret put 写入）。两段式常时比较（Pattern 6）：先比长度（不同直接
@@ -25,7 +27,10 @@
 import {
   createChannel,
   createSendKeyRecord,
+  deleteChannelKeys,
   listChannels,
+  readChannelRecord,
+  resetChannelKey,
   resolveSendKey,
   revokeSendKeyRecord,
   SEND_KEY_LIMIT,
@@ -159,10 +164,87 @@ export async function handleAdminApi(request: Request, env: Env): Promise<Respon
     }
     return handleRevokeSendKey(env, channelId, key);
   }
+  if (sub === "reset-channel-key" && tail === undefined && request.method === "POST") {
+    return handleResetChannelKey(env, channelId);
+  }
+  if (sub === undefined && tail === undefined && request.method === "DELETE") {
+    return handleDeleteChannel(env, channelId);
+  }
 
-  // reset-channel-key / messages / DELETE 频道本体：路由骨架已定型，分支留
-  // 占位 404 由后续 plan 扩展（本任务只实现 send-keys 两分支）。
+  // messages 分支留 03-04（参数化路由骨架其余分支已全部落位）。
   return NOT_FOUND();
+}
+
+/**
+ * POST /api/admin/channels/:channelId/reset-channel-key（D-33，KEY-04）：
+ * KV 写先（keys.ts resetChannelKey——删 ch:old + 写 ch:new + 重写 id:，
+ * name/sendKeys/createdAt 原样保留）→ DO POST /kick-all 转发后 → 201
+ * {channelKey: 新值}（密钥唯一完整返回点先例延续）。
+ *
+ * 顺序红线（key_links）：KV 写先 DO 踢后——反序（先踢后写）制造旧 Key
+ * 无限重挂窗口（被踢客户端立即以边缘缓存的旧 ch: 值重连成功后再无人
+ * 踢它）。DO 转发失败不阻断 201：踢连是尽力语义，KV 已切换，生产
+ * ≤60s 边缘缓存窗口后旧 Key 自然失效（文档化行为）。
+ */
+async function handleResetChannelKey(
+  env: Env,
+  channelId: string,
+): Promise<Response> {
+  const record = await resetChannelKey(env, channelId);
+  if (record === null) {
+    return NOT_FOUND();
+  }
+  try {
+    const forward = new Request(`${INTERNAL_ORIGIN}/kick-all`, {
+      method: "POST",
+      headers: { [VERIFIED_HEADER]: "1" },
+    });
+    await env.CHANNELS.getByName(channelId).fetch(forward);
+  } catch {
+    // 见函数头注释：踢连尽力语义，不阻断 201。
+  }
+  return new Response(JSON.stringify({ channelKey: record.channelKey }), {
+    status: 201,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+/**
+ * DELETE /api/admin/channels/:channelId（D-34 硬删除，one-way）：
+ * 读 id:（经 normalize，miss -> 404）→ DO POST /purge 转发先（踢连 +
+ * deleteAll + deleteAlarm 成对清库）→ keys.ts deleteChannelKeys 后
+ * （ch:old + 全部 sk: + id: 逐键删，id: 最后落）→ 204 空体。
+ *
+ * 顺序红线（key_links）：DO 先 KV 后——反序产生不可达孤儿 DO（频道从
+ * 列表消失、无法重试）；正序部分失败时频道仍在列表，整链重试幂等
+ * （KV delete 幂等 + purge 对已清 DO 是 no-op）。DO purge 转发失败时
+ * 不落任何 KV 删除（500 server_error，频道完整保留可重试）。
+ */
+async function handleDeleteChannel(
+  env: Env,
+  channelId: string,
+): Promise<Response> {
+  const record = await readChannelRecord(env, channelId);
+  if (record === null) {
+    return NOT_FOUND();
+  }
+  let purgeOk = false;
+  try {
+    const forward = new Request(`${INTERNAL_ORIGIN}/purge`, {
+      method: "POST",
+      headers: { [VERIFIED_HEADER]: "1" },
+    });
+    const resp = await env.CHANNELS.getByName(channelId).fetch(forward);
+    purgeOk = resp.ok;
+  } catch {
+    purgeOk = false;
+  }
+  if (!purgeOk) {
+    // 不落 KV 删除：频道完整保留在列表，删除链可整链重试（幂等）。
+    return errorEnvelope(500, "server_error", "Internal server error.");
+  }
+  await deleteChannelKeys(env, record);
+  return new Response(null, { status: 204 });
 }
 
 /**

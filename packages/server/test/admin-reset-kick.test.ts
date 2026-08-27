@@ -152,6 +152,9 @@ describe("POST reset-channel-key（D-33 / KEY-04）", () => {
       { body: JSON.stringify({ label: "keep-me" }) },
     );
     expect(extra.status).toBe(201);
+    // 基线在追加第二个 Key 之后建立（保留性断言的对照面含全部 2 个 Key）。
+    const baseline = await findChannelInList(channel.channelId);
+    expect(baseline.sendKeys).toHaveLength(2);
 
     const resp = await adminRequest(
       "POST",
@@ -166,10 +169,9 @@ describe("POST reset-channel-key（D-33 / KEY-04）", () => {
     // id: 反向索引对照：新 channelKey 已生效，name/sendKeys/createdAt 原样保留。
     const listed = await findChannelInList(channel.channelId);
     expect(listed.channelKey).toBe(body.channelKey);
-    expect(listed.name).toBe(channel.name);
-    expect(listed.createdAt).toBe(channel.createdAt);
-    expect(listed.sendKeys).toHaveLength(2);
-    expect(listed.sendKeys).toEqual(channel.sendKeys);
+    expect(listed.name).toBe(baseline.name);
+    expect(listed.createdAt).toBe(baseline.createdAt);
+    expect(listed.sendKeys).toEqual(baseline.sendKeys);
   });
 
   it("踢连 close 1008 + 旧 Key 401 + 历史保留 + Send Key 存活（SC2/KEY-04 服务端侧）", async () => {

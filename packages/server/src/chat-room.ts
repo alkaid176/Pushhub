@@ -210,6 +210,12 @@ export class ChatRoom extends DurableObject {
     if (url.pathname === "/cleanup-rate" && request.method === "POST") {
       return this.handleCleanupRate(request);
     }
+    if (url.pathname === "/kick-all" && request.method === "POST") {
+      return this.handleKickAll();
+    }
+    if (url.pathname === "/purge" && request.method === "POST") {
+      return this.handlePurge();
+    }
     return errorEnvelope(404, "not_found", "Unknown internal route.");
   }
 
@@ -229,6 +235,60 @@ export class ChatRoom extends DurableObject {
       sendKey,
     );
     return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  }
+
+  /**
+   * 重置 Channel Key 踢连（03-03，D-33）：遍历全部已连接 WS（getWebSockets
+   * 含休眠中连接句柄——运行时句柄表是唯一真相）逐个 close，计数返回。
+   * close code 1008 = policy violation（连接因策略被终止，planner 裁定记入
+   * 决策表）；reason 供 Phase 5/6 客户端展示细化。已死连接 close 抛错时
+   * 忽略（publish 死连接清理同款容错）。web SDK 不区分 close code 一律
+   * 退避重连——踢连后的旧 Key 重挂防线由 Worker 侧编排顺序（KV 写先）
+   * 与 ≤60s 缓存窗口共同保证，不在本路由职责内。
+   */
+  private handleKickAll(): Response {
+    let kicked = 0;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(1008, "channel key reset");
+        kicked++;
+      } catch {
+        // 已死连接（publish 死连接清理同款容错）。
+      }
+    }
+    return new Response(JSON.stringify({ kicked }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  }
+
+  /**
+   * 频道硬删除清库（03-03，D-34）：踢连（close 1008 "channel deleted"）→
+   * deleteAll() → deleteAlarm() 三步成对执行。
+   *
+   * 红线：deleteAll 与 deleteAlarm 必须成对——deleteAll 官方语义清整个
+   * SQLite 库（含 SQL 表与 KV 型数据，原子）但**不删 alarm**，而本项目
+   * alarm 处理器尾部无条件重设（自愈节奏），漏 deleteAlarm 即僵尸 DO
+   * 永久每日唤醒烧额度（Pitfall 1）。幂等：对已清空 DO 重放本路由是
+   * no-op（构造器在下次唤醒重建空表后再清一次无害）——部分失败的删除
+   * 链可整链重试。
+   */
+  private async handlePurge(): Promise<Response> {
+    let kicked = 0;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(1008, "channel deleted");
+        kicked++;
+      } catch {
+        // 已死连接。
+      }
+    }
+    await this.ctx.storage.deleteAll();
+    await this.ctx.storage.deleteAlarm();
+    return new Response(JSON.stringify({ kicked }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     });

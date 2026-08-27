@@ -100,10 +100,19 @@ function readDoState(
     env.CHANNELS.getByName(channelId),
     async (_obj: unknown, state: DurableObjectState) => {
       const alarm = await state.storage.getAlarm();
-      const row = state.storage.sql
-        .exec("SELECT COUNT(*) AS n FROM messages")
-        .one() as { n: number };
-      return { alarm, messageCount: row.n };
+      let messageCount = 0;
+      try {
+        const row = state.storage.sql
+          .exec("SELECT COUNT(*) AS n FROM messages")
+          .one() as { n: number };
+        messageCount = row.n;
+      } catch {
+        // deleteAll 清整库后驻留内存的 DO 未重跑构造器（表不存在）——
+        // 语义即 0 行；若已被逐出重建则命中空表分支（COUNT 为 0）。
+        // 两态对「messages 表行数为 0」断言等价。
+        messageCount = 0;
+      }
+      return { alarm, messageCount };
     },
   );
 }

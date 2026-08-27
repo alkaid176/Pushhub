@@ -323,3 +323,78 @@ export async function revokeSendKeyRecord(
     }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// 写路径三（03-03，KEY-02/KEY-04/D-33/D-34）：Channel Key 重置 / 频道删除
+// ---------------------------------------------------------------------------
+
+/** 读单频道记录（id: 反向索引，经 normalize；miss 返回 null）。admin 参数化路由共用读点。 */
+export async function readChannelRecord(
+  env: Env,
+  channelId: string,
+): Promise<ChannelRecord | null> {
+  const stored = await readIdRecord(env, channelId);
+  return stored === null ? null : { channelId, ...stored };
+}
+
+/**
+ * 重置 Channel Key（D-33，KEY-04——重置只动 Channel Key，历史与 Send Key
+ * 均不动）：读 id:（经 normalize，migrate-on-write）→ 内部顺序恒定：
+ * KV delete ch:<旧> → KV put ch:<新>（值 {channelId, name, createdAt} 原样）
+ * → KV 重写 id:（新 channelKey，sendKeys/name/createdAt 不变）。miss 返回
+ * null（上游 404）。
+ *
+ * 顺序红线（key_links）：调用方必须先完成本函数的 KV 写、后转发 DO
+ * /kick-all——反序（先踢后写）制造旧 Key 无限重挂窗口（被踢客户端立即
+ * 以边缘缓存的旧 ch: 值重连成功后再无人踢它）。
+ */
+export async function resetChannelKey(
+  env: Env,
+  channelId: string,
+): Promise<ChannelRecord | null> {
+  const stored = await readIdRecord(env, channelId);
+  if (stored === null) {
+    return null;
+  }
+  const channelKey = generateChannelKey();
+  await env.KV.delete(KEY_PREFIX_CH + stored.channelKey);
+  await env.KV.put(
+    KEY_PREFIX_CH + channelKey,
+    JSON.stringify({
+      channelId,
+      name: stored.name,
+      createdAt: stored.createdAt,
+    }),
+  );
+  await env.KV.put(
+    KEY_PREFIX_ID + channelId,
+    JSON.stringify({
+      channelKey,
+      sendKeys: stored.sendKeys,
+      name: stored.name,
+      createdAt: stored.createdAt,
+    }),
+  );
+  return { channelId, channelKey, sendKeys: stored.sendKeys, name: stored.name, createdAt: stored.createdAt };
+}
+
+/**
+ * 删除频道全部 KV 键（D-34）：ch:<旧 channelKey> → 每个 sk:<key>（全列表，
+ * 最多 12 次删除——不同 key 无 1 写/秒限制，顺序 await 逐键删即可）→
+ * id:<channelId> 最后删（与 createChannel 写序"id: 反向索引最后落"对称：
+ * 部分失败时频道仍在列表，删除链可整链重试；KV delete 幂等保证重放安全）。
+ *
+ * 顺序红线（key_links）：调用方必须先完成 DO /purge 转发、再调本函数——
+ * 反序（先删 KV 后 purge DO）在 purge 失败时产生不可达孤儿 DO（频道从
+ * 列表消失、无键指向、无法重试）。
+ */
+export async function deleteChannelKeys(
+  env: Env,
+  record: ChannelRecord,
+): Promise<void> {
+  await env.KV.delete(KEY_PREFIX_CH + record.channelKey);
+  for (const rec of record.sendKeys) {
+    await env.KV.delete(KEY_PREFIX_SEND + rec.key);
+  }
+  await env.KV.delete(KEY_PREFIX_ID + record.channelId);
+}
