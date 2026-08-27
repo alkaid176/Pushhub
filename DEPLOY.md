@@ -39,6 +39,7 @@ PH_SMOKE_URL=https://pushhub.snake160220.workers.dev PH_ADMIN_KEY=<secret> node 
 1. **`compatibility_date` 不识别（部署报 "Unrecognized compatibility date"）**：本机 wrangler 版本较生产 runtime 旧。将 `packages/server/wrangler.jsonc` 的 `compatibility_date` 回退一天重试；vitest 配置经 `configPath` 自动同步，无需另改。
 2. **KV namespace id 未回填 / 绑定报错（"Couldn't find binding KV"）**：`packages/server/wrangler.jsonc` 的 `kv_namespaces[0].id` 必须是真实 namespace id（当前 `ffc9065c998a4567a4a2754ede9eca8b`）。丢失时 `npx wrangler kv namespace create KV` 重建，把输出 id 回填 wrangler.jsonc，并重跑 `pnpm --filter @pushhub/server run cf-typegen` 同步类型。
 3. **ADMIN_KEY secret 缺失 / 需轮换（/api/admin/* 一律 500 server_error）**：`cd packages/server && npx wrangler secret put ADMIN_KEY` 重写（交互粘贴新值，立即生效于新部署）；轮换后旧值立即失效。secret 只经此命令写入——绝不进仓库、不进 `.dev.vars`（已 gitignore）、不进任何提交文件。
+4. **管理 API 意外失败返回 500 server_error 信封（WR-04 兜底）**：KV/DO 瞬断、put 超额或生产 KV 同 key 1 写/秒限制触发的异常统一映射为 D-06 通用信封（非裸 500 文本）。生产约束：**同一频道两次「重置 Channel Key」间隔应 ≥1s**（`id:<channelId>` 连续重写可能触发 KV 同 key 限速；Send Key 建/吊销已迁移为单键写（CR-01），无此约束）。wrangler dev（miniflare）不强制该限制，脚本化快速连击仅在生产的此路径可见。
 
 ## 部署记录
 

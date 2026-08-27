@@ -93,8 +93,25 @@ function checkAdminAuth(request: Request, env: Env): Response | null {
   return null;
 }
 
-/** /api/admin/* 处理器（由 index.ts 前缀分发）。 */
+/**
+ * /api/admin/* 处理器（由 index.ts 前缀分发）。
+ *
+ * WR-04：顶层异常兜底——KV/DO 意外失败（put 超额/瞬断、DO fetch 网络异常、
+ * 生产 KV 同 key 1 写/秒限制触发 429 等）统一映射 D-06 通用 500 信封，不
+ * 泄漏内部细节（D-13 最小信息量）。裸 500 文本会破坏「发送方脚本程序化
+ * 消费 code」的冻结契约；checkAdminAuth 对 ADMIN_KEY 缺失已映射 500 信封，
+ * 此处覆盖其余一切意外路径。
+ */
 export async function handleAdminApi(request: Request, env: Env): Promise<Response> {
+  try {
+    return await routeAdminApi(request, env);
+  } catch {
+    return errorEnvelope(500, "server_error", "Internal server error.");
+  }
+}
+
+/** 路由分发本体（原 handleAdminApi 主体，由 WR-04 兜底层包裹）。 */
+async function routeAdminApi(request: Request, env: Env): Promise<Response> {
   const denied = checkAdminAuth(request, env);
   if (denied !== null) {
     return denied;
