@@ -38,5 +38,25 @@
     "name": "normal-md",
     "input": "normal **md** [link](https://example.com)",
     "expected": "<p>normal <strong>md</strong> <a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">link</a></p>\n"
+  },
+  {
+    "name": "svg-anchor",
+    "input": "<svg><a xlink:href=\"https://ok.example\"><text x=\"8\" y=\"16\">链接</text></a></svg>",
+    "expected": "<p><svg><a xlink:href=\"https://ok.example\" target=\"_blank\" rel=\"noopener noreferrer\"><text x=\"8\" y=\"16\">链接</text></a></svg></p>\n"
+  },
+  {
+    "name": "style-tag",
+    "input": "<style>body{color:red}</style>after",
+    "expected": "after"
+  },
+  {
+    "name": "form-controls",
+    "input": "<form action=\"https://evil.example/phish\"><input type=\"text\" name=\"pwd\"><button type=\"submit\">提交</button></form>",
+    "expected": "提交"
+  },
+  {
+    "name": "task-list",
+    "input": "- [x] 已完成\n- [ ] 待办",
+    "expected": "<ul>\n<li> 已完成</li>\n<li> 待办</li>\n</ul>\n"
   }
 ]
