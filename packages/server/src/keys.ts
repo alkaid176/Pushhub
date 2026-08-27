@@ -233,3 +233,93 @@ export async function listChannels(
   }
   return records;
 }
+
+// ---------------------------------------------------------------------------
+// 写路径二（03-02，KEY-03/D-30/D-31/D-32）：Send Key 增删
+// ---------------------------------------------------------------------------
+
+/** 每频道 Send Key 上限（D-31——公网防线：防循环建 Key 烧 KV 写额度）。 */
+export const SEND_KEY_LIMIT = 10;
+
+/** 建 Send Key 结果：not_found = id: miss；limit = 已达每频道上限（写入前判定）。 */
+export type CreateSendKeyResult =
+  | { ok: true; record: SendKeyRecord }
+  | { ok: false; reason: "not_found" | "limit" };
+
+/** 读 id: 记录（normalize 兼容；miss 返回 null）。写路径共用读点。 */
+async function readIdRecord(
+  env: Env,
+  channelId: string,
+): Promise<IdRecordStored | null> {
+  const stored = await env.KV.get<IdRecordStored | IdRecordLegacy>(
+    KEY_PREFIX_ID + channelId,
+    { type: "json" },
+  );
+  return stored === null ? null : normalizeIdRecord(stored);
+}
+
+/**
+ * 建 Send Key（D-30）：读 id:（经 normalize，migrate-on-write）→ 上限判定 →
+ * KV 写 sk:（值含 label）→ KV 重写 id:（sendKeys 追加，channelKey/name/
+ * createdAt 原样保留）。每次 2 KV 写（额度核算表：远低于 1,000/天）。
+ *
+ * 时序红线（D-31 key_link）：上限判定必须在任何 KV 写之前——防第 11 个 Key
+ * 已落盘后才拒绝。
+ */
+export async function createSendKeyRecord(
+  env: Env,
+  channelId: string,
+  label: string | null,
+): Promise<CreateSendKeyResult> {
+  const stored = await readIdRecord(env, channelId);
+  if (stored === null) {
+    return { ok: false, reason: "not_found" };
+  }
+  if (stored.sendKeys.length >= SEND_KEY_LIMIT) {
+    return { ok: false, reason: "limit" };
+  }
+  const key = generateSendKey();
+  const createdAt = Date.now();
+  await env.KV.put(
+    KEY_PREFIX_SEND + key,
+    JSON.stringify({ channelId, label }),
+  );
+  await env.KV.put(
+    KEY_PREFIX_ID + channelId,
+    JSON.stringify({
+      channelKey: stored.channelKey,
+      sendKeys: [...stored.sendKeys, { key, label, createdAt }],
+      name: stored.name,
+      createdAt: stored.createdAt,
+    }),
+  );
+  return { ok: true, record: { key, label, createdAt } };
+}
+
+/**
+ * 吊销 Send Key（D-32）三存储联动的前两环：KV delete sk:<key>（幂等——
+ * KV delete 对不存在的 key 同样返回成功，流程天然可重试）→ KV 重写 id:
+ * （sendKeys 过滤移除该 key，migrate-on-write）。第三环（DO rate_sends 行
+ * 即时删除）由调用方转发 /cleanup-rate 完成。
+ */
+export async function revokeSendKeyRecord(
+  env: Env,
+  channelId: string,
+  key: string,
+): Promise<void> {
+  await env.KV.delete(KEY_PREFIX_SEND + key);
+  const stored = await readIdRecord(env, channelId);
+  if (stored === null) {
+    // 防御兜底：sk: 已删（凭据已失效），id: 缺席只影响列表完整性。
+    return;
+  }
+  await env.KV.put(
+    KEY_PREFIX_ID + channelId,
+    JSON.stringify({
+      channelKey: stored.channelKey,
+      sendKeys: stored.sendKeys.filter((r) => r.key !== key),
+      name: stored.name,
+      createdAt: stored.createdAt,
+    }),
+  );
+}

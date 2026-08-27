@@ -207,7 +207,31 @@ export class ChatRoom extends DurableObject {
     if (url.pathname === "/ws" && request.headers.get("Upgrade") === "websocket") {
       return this.handleWebSocketUpgrade();
     }
+    if (url.pathname === "/cleanup-rate" && request.method === "POST") {
+      return this.handleCleanupRate(request);
+    }
     return errorEnvelope(404, "not_found", "Unknown internal route.");
+  }
+
+  /**
+   * 吊销联动第三环（03-02，D-32——planner 裁定即时清理）：删除该 Send Key 的
+   * rate_sends 行。X-PH-Send-Key 缺失即内部契约违例——照 publish 同款处理
+   * （T-03-08：本分支位于 X-PH-Verified 校验之后，结构继承防护）。
+   * 幂等：行不存在时 DELETE 零行为；键名永不复用 + 每日 alarm 自然清扫兜底。
+   */
+  private handleCleanupRate(request: Request): Response {
+    const sendKey = request.headers.get(SEND_KEY_HEADER);
+    if (sendKey === null) {
+      return errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
+    }
+    this.ctx.storage.sql.exec(
+      "DELETE FROM rate_sends WHERE send_key = ?1",
+      sendKey,
+    );
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
   }
 
   /**
