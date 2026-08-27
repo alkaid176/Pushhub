@@ -165,6 +165,11 @@ None - no external service configuration required.
 - `pnpm --filter @pushhub/web-sdk test`：**79/79 全绿**（68 基线 + 4 render 样本 + 6 机器 WS_FAIL + 1 adapter 畸形 URL），零回退
 - `pnpm --filter @pushhub/web-sdk run typecheck`：**exit 0**（MachineEvent 联合扩展后 switch 穷尽性由编译器保证）
 
+## Self-Check: PASSED
+- 6 个 key-files.modified 全部存在于磁盘
+- 5 个提交（02bf14a / df81d41 / cd21f3c / 519b33f / dc9342d）全部存在于 git log
+- 两任务 done criteria 经自动化验证（测试全绿 + typecheck 通过）
+
 ---
 *Phase: 02-web-sdk*
 *Completed: 2026-08-27*
