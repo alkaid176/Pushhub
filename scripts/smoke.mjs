@@ -78,7 +78,7 @@ async function createChannel() {
   if (resp.status !== 201) fail("admin-create", `expected 201, got ${resp.status}: ${await resp.text()}`);
   const channel = await resp.json();
   if (!/^phc_[0-9A-Za-z]{32}$/.test(channel.channelKey)) fail("admin-create", `bad channelKey: ${JSON.stringify(channel.channelKey)}`);
-  if (!/^phs_[0-9A-Za-z]{32}$/.test(channel.sendKey)) fail("admin-create", `bad sendKey: ${JSON.stringify(channel.sendKey)}`);
+  if (!/^phs_[0-9A-Za-z]{32}$/.test(channel.sendKeys[0].key)) fail("admin-create", `bad sendKey: ${JSON.stringify(channel.sendKeys[0].key)}`);
   if (!/^[0-9A-Za-z]{16}$/.test(channel.channelId)) fail("admin-create", `bad channelId: ${JSON.stringify(channel.channelId)}`);
   console.log(`OK [admin-create]: channel "${name}" (id ${channel.channelId}) -> phc_/phs_ keys minted`);
   return channel;
@@ -86,7 +86,7 @@ async function createChannel() {
 
 const channel = await createChannel();
 const CHANNEL_KEY = channel.channelKey;
-const SEND_KEY = channel.sendKey;
+const SEND_KEY = channel.sendKeys[0].key;
 
 // ---- ② 第一条消息：POST /api/send 断言 200 且含 id 与 seq ----
 let resp1;

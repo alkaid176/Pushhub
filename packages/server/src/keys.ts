@@ -1,10 +1,10 @@
 /**
  * KV 密钥读写路径封装（Pattern 6）。
  *
- * KV 键表（三前缀，写路径唯一入口 createChannel——01-05）：
+ * KV 键表（三前缀，写路径唯一入口 createChannel——01-05；03-01 id:/sk: 值结构演进 D-30/D-35）：
  *   ch:<channel_key> -> {channelId, name, createdAt}
- *   sk:<send_key>    -> {channelId}
- *   id:<channelId>   -> {channelKey, sendKey, name, createdAt}（反向索引，供 admin 列表/重置清理）
+ *   sk:<send_key>    -> {channelId, label?}（label 纯增量可选字段，旧值 {channelId} 天然合法）
+ *   id:<channelId>   -> {channelKey, sendKeys: SendKeyRecord[], name, createdAt}（反向索引，供 admin 列表/重置清理）
  *
  * 读路径 cacheTtl 60（KV 默认值，显式标注意图）：
  * 负查询同样进边缘缓存——无效密钥轰击大多命中缓存，不产生穿透。
@@ -15,9 +15,10 @@ export const KEY_PREFIX_CH = "ch:";
 export const KEY_PREFIX_SEND = "sk:";
 export const KEY_PREFIX_ID = "id:";
 
-/** sk:<key> 命中后的值结构。 */
+/** sk:<key> 命中后的值结构。label 是 Phase 3 新增可选字段（D-30）——旧值无此键天然合法。 */
 export interface SendKeyInfo {
   channelId: string;
+  label?: string | null;
 }
 
 /** ch:<key> 命中后的值结构。 */
@@ -97,17 +98,74 @@ export function generateChannelId(): string {
   return generateRandomString(CHANNEL_ID_LENGTH);
 }
 
+/** 单个 Send Key 的记录形态（D-30/D-35：id: 值 sendKeys 数组元素 / API 响应元素）。 */
+export interface SendKeyRecord {
+  /** phs_ + 32 字符密钥本体。 */
+  key: string;
+  /** 人类可读标签（可选，建频道初始 Key 恒 null）。 */
+  label: string | null;
+  createdAt: number;
+}
+
 /** id:<channelId> 反向索引的值结构（GET /api/admin/channels 列表数据源）。 */
 export interface ChannelRecord {
   channelId: string;
   channelKey: string;
-  sendKey: string;
+  sendKeys: SendKeyRecord[];
   name: string;
   createdAt: number;
 }
 
 /** 建频道返回的三件套（含 name/createdAt，即 201 响应体）。 */
 export interface CreatedChannel extends ChannelRecord {}
+
+/** id: 值的新格式存储形态（03-01 起恒写）。 */
+interface IdRecordStored {
+  channelKey: string;
+  sendKeys: SendKeyRecord[];
+  name: string;
+  createdAt: number;
+}
+
+/** id: 值的旧格式（Phase 3 前单 Send Key：顶层 sendKey 字符串字段）。 */
+interface IdRecordLegacy {
+  channelKey: string;
+  sendKey: string;
+  name: string;
+  createdAt: number;
+}
+
+/**
+ * id: 记录 normalize 兼容层（D-30/D-35，migrate-on-write 读侧半边）。
+ *
+ * 旧格式（顶层 sendKey 字符串）映射为 sendKeys 单元素数组（label: null、
+ * createdAt 取顶层值）；新格式（sendKeys 数组）原样通过。生产 0.1.0~0.1.10
+ * 的旧格式冒烟频道经此层照常列出；任何被管理操作触碰的频道在写路径升级为
+ * 新格式（不写迁移脚本、不直改生产键空间——normalize 是永久防御，保护漏删
+ * 的旧频道）。listChannels 逐键 get 之后统一走本函数。
+ */
+function normalizeIdRecord(stored: IdRecordStored | IdRecordLegacy): IdRecordStored {
+  if (Array.isArray((stored as IdRecordStored).sendKeys)) {
+    return stored as IdRecordStored;
+  }
+  const legacy = stored as IdRecordLegacy;
+  if (typeof legacy.sendKey === "string") {
+    return {
+      channelKey: legacy.channelKey,
+      sendKeys: [{ key: legacy.sendKey, label: null, createdAt: legacy.createdAt }],
+      name: legacy.name,
+      createdAt: legacy.createdAt,
+    };
+  }
+  // 既无 sendKeys 数组也无顶层 sendKey：数据损坏兜底——按零 Send Key 记录
+  // 带出其余字段（列表形态完整，消费方 sendKeys 遍历零异常）。
+  return {
+    channelKey: legacy.channelKey,
+    sendKeys: [],
+    name: legacy.name,
+    createdAt: legacy.createdAt,
+  };
+}
 
 /**
  * 建频道：生成 channelId + 双密钥，三前缀各一次 KV 写（KEY-01/D-12）。
@@ -121,24 +179,31 @@ export async function createChannel(env: Env, name: string): Promise<CreatedChan
   const channelKey = generateChannelKey();
   const sendKey = generateSendKey();
   const createdAt = Date.now();
+  const sendKeys: SendKeyRecord[] = [{ key: sendKey, label: null, createdAt }];
 
   await env.KV.put(
     KEY_PREFIX_CH + channelKey,
     JSON.stringify({ channelId, name, createdAt }),
   );
-  await env.KV.put(KEY_PREFIX_SEND + sendKey, JSON.stringify({ channelId }));
+  // sk: 恒写新格式（含 label 键，D-30）：旧读代码无此键不破坏，新读代码可显示标签。
+  await env.KV.put(
+    KEY_PREFIX_SEND + sendKey,
+    JSON.stringify({ channelId, label: null }),
+  );
+  // id: 恒写新格式（sendKeys 数组，D-30/D-35）。
   await env.KV.put(
     KEY_PREFIX_ID + channelId,
-    JSON.stringify({ channelKey, sendKey, name, createdAt }),
+    JSON.stringify({ channelKey, sendKeys, name, createdAt }),
   );
 
-  return { channelId, channelKey, sendKey, name, createdAt };
+  return { channelId, channelKey, sendKeys, name, createdAt };
 }
 
 /**
  * 列全部频道：KV list 以 "id:" 前缀枚举 + 逐键 get 汇总。
  * 单页上限 1000——list_complete/cursor 游标循环拉全（频道数超单页不漏）。
  * pageSize 仅测试用途（压缩分页路径的验证成本）；生产路径不传。
+ * 读路径统一经 normalizeIdRecord（旧格式兼容，D-30/D-35）。
  */
 export async function listChannels(
   env: Env,
@@ -153,14 +218,14 @@ export async function listChannels(
       cursor,
     });
     for (const key of page.keys) {
-      const stored = await env.KV.get<{
-        channelKey: string;
-        sendKey: string;
-        name: string;
-        createdAt: number;
-      }>(key.name, { type: "json" });
+      const stored = await env.KV.get<IdRecordStored | IdRecordLegacy>(key.name, {
+        type: "json",
+      });
       if (stored !== null) {
-        records.push({ channelId: key.name.slice(KEY_PREFIX_ID.length), ...stored });
+        records.push({
+          channelId: key.name.slice(KEY_PREFIX_ID.length),
+          ...normalizeIdRecord(stored),
+        });
       }
     }
     if (page.list_complete) break;

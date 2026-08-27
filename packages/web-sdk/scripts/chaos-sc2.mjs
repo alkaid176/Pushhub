@@ -98,6 +98,8 @@ const MSG1 = `chaos during-deploy #1 ${stamp}`;
 const MSG2 = `chaos after-deploy #2 ${stamp}`;
 
 const channel = await createChannel();
+// 03-01 schema 演进联动（D-30/D-35）：201 响应 sendKey 单值 -> sendKeys[]。
+const SEND_KEY = channel.sendKeys[0].key;
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
@@ -112,7 +114,7 @@ try {
     { timeout: 30_000 },
   );
   console.log(`OK [viewer-online]: status → online（${EXPECT_VERSION} 查看器接入）`);
-  await send(channel.sendKey, MSG_BASE);
+  await send(SEND_KEY, MSG_BASE);
   await page.waitForFunction(
     (t) => [...document.querySelectorAll("#messages li")].some((li) => li.textContent?.includes(t)),
     MSG_BASE,
@@ -134,14 +136,14 @@ try {
   // 部署（必然断开全量 WS）——进行期间发 #1，结束后发 #2。
   const deployStart = Date.now();
   const deployPromise = runDeploy();
-  await send(channel.sendKey, MSG1);
+  await send(SEND_KEY, MSG1);
   console.log("OK [send-during-deploy]: #1 已发（部署进行中）");
   const deploy = await deployPromise;
   const deployMs = Date.now() - deployStart;
   if (deploy.code !== 0) fail("deploy", `exit ${deploy.code}: ${deploy.out.slice(-500)}`);
   const versionId = deploy.out.match(/Current Version ID:\s*(\S+)/)?.[1] ?? "unknown";
   console.log(`OK [deploy]: exit 0 in ${deployMs}ms, Version ID ${versionId}`);
-  await send(channel.sendKey, MSG2);
+  await send(SEND_KEY, MSG2);
   console.log("OK [send-after-deploy]: #2 已发");
 
   // 轮询最长 90s（覆盖 60s 退避上限）。

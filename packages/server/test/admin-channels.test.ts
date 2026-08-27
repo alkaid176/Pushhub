@@ -6,7 +6,8 @@
  *    ADMIN_KEY 未配置 -> 500 server_error（Flagged Assumption，最小信息量）；
  *    长度不等的 Key（前缀正确但截断/超长）同样 401——两段式比较的长度前置分支。
  *  - D-12 创建：POST /api/admin/channels -> 201 三件套
- *    （channelId 16 字符、channelKey phc_+32、sendKey phs_+32、name/createdAt 回显）；
+ *    （channelId 16 字符、channelKey phc_+32、sendKeys[0].key phs_+32（D-30/D-35 演进）、
+ *    name/createdAt 回显）；
  *    name 缺失 / 超 64 字符 -> 400 invalid_body；非 JSON -> 400 invalid_json。
  *  - 三级闭环：创建返回的 Send Key 立即经 /api/send 得 200、Channel Key 立即
  *    连 WS 收首拉 history 帧（经真实 Worker 入口，KV 三前缀写读闭环）。
@@ -99,7 +100,7 @@ async function expectErrorEnvelope(
 interface CreatedChannel {
   channelId: string;
   channelKey: string;
-  sendKey: string;
+  sendKeys: { key: string; label: string | null; createdAt: number }[];
   name: string;
   createdAt: number;
 }
@@ -150,12 +151,15 @@ describe("Admin API 鉴权（D-13）", () => {
 });
 
 describe("POST /api/admin/channels 建频道（D-12）", () => {
-  it("201 三件套：phc_/phs_ 前缀 + 恰 32 字符、channelId 16 字符、name/createdAt 回显", async () => {
+  it("201 三件套：phc_/phs_ 前缀 + 恰 32 字符、channelId 16 字符、name/createdAt 回显、sendKeys 数组（D-30/D-35）", async () => {
     const channel = await createChannelViaApi("build-alerts");
     expect(channel.channelKey).toMatch(/^phc_[0-9A-Za-z]{32}$/);
     expect(channel.channelKey.length).toBe(4 + 32);
-    expect(channel.sendKey).toMatch(/^phs_[0-9A-Za-z]{32}$/);
-    expect(channel.sendKey.length).toBe(4 + 32);
+    expect(channel.sendKeys).toHaveLength(1);
+    expect(channel.sendKeys[0].key).toMatch(/^phs_[0-9A-Za-z]{32}$/);
+    expect(channel.sendKeys[0].key.length).toBe(4 + 32);
+    expect(channel.sendKeys[0].label).toBeNull();
+    expect(channel.sendKeys[0].createdAt).toBe(channel.createdAt);
     expect(channel.channelId).toMatch(/^[0-9A-Za-z]{16}$/);
     expect(channel.name).toBe("build-alerts");
     expect(Number.isInteger(channel.createdAt)).toBe(true);
@@ -178,7 +182,7 @@ describe("三级密钥闭环（KEY-01 端到端）", () => {
     const channel = await createChannelViaApi(`chain-${uniqueSuffix()}`);
 
     // Send Key -> /api/send 200（sk: 前缀写读闭环）。
-    const sendResp = await sendRequest(channel.sendKey, { text: "created via admin api" });
+    const sendResp = await sendRequest(channel.sendKeys[0].key, { text: "created via admin api" });
     expect(sendResp.status).toBe(200);
     const sendBody = (await sendResp.json()) as { id: string; seq: number };
     expect(sendBody.seq).toBeGreaterThanOrEqual(1);
@@ -220,6 +224,29 @@ describe("GET /api/admin/channels 列表（D-12）", () => {
     }
     expect(records.length).toBeGreaterThanOrEqual(3);
   });
+
+  it("旧格式 id: 记录（顶层 sendKey）经 normalize 兼容列出为 sendKeys 数组（D-30/D-35）", async () => {
+    // 直种一条 Phase 3 前的旧格式 id: 值（模拟生产 0.1.0~0.1.10 冒烟频道）。
+    const channelId = uniqueSuffix() + uniqueSuffix();
+    const createdAt = Date.now();
+    const legacyValue = {
+      channelKey: `phc_${"a".repeat(32)}`,
+      sendKey: `phs_${"b".repeat(32)}`,
+      name: "legacy-smoke-channel",
+      createdAt,
+    };
+    await env.KV.put(`id:${channelId}`, JSON.stringify(legacyValue));
+
+    const records = await listChannels(env);
+    const found = records.find((r) => r.channelId === channelId);
+    expect(found).toBeDefined();
+    expect(found!.channelKey).toBe(legacyValue.channelKey);
+    expect(found!.sendKeys).toEqual([
+      { key: legacyValue.sendKey, label: null, createdAt },
+    ]);
+    expect(found!.name).toBe("legacy-smoke-channel");
+    expect(found!.createdAt).toBe(createdAt);
+  });
 });
 
 describe("三级密钥权限隔离（KEY-01 双向断言）", () => {
@@ -233,7 +260,7 @@ describe("三级密钥权限隔离（KEY-01 双向断言）", () => {
       "invalid_key",
     );
     // Send Key 当 Channel Key 用 -> 401（无 WS 升级）。
-    const wsDenied = await wsRequest(channel.sendKey);
+    const wsDenied = await wsRequest(channel.sendKeys[0].key);
     expect(wsDenied.status).toBe(401);
     expect(wsDenied.webSocket).toBeNull();
     await expectErrorEnvelope(wsDenied, 401, "invalid_key");

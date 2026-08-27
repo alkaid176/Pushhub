@@ -39,10 +39,20 @@ async function createChannel(request: APIRequestContext): Promise<ChannelInfo> {
     data: { name },
   });
   expect(resp.status()).toBe(201);
-  const channel = (await resp.json()) as ChannelInfo;
+  // 响应结构演进（D-30/D-35）：sendKey 单值 -> sendKeys[]。helper 对外形态
+  // 不变（消费点零改动），实现从 sendKeys[0].key 取值填充 sendKey 字段。
+  const channel = (await resp.json()) as {
+    channelKey: string;
+    channelId: string;
+    sendKeys: { key: string }[];
+  };
   expect(channel.channelKey).toMatch(/^phc_[0-9A-Za-z]{32}$/);
-  expect(channel.sendKey).toMatch(/^phs_[0-9A-Za-z]{32}$/);
-  return channel;
+  expect(channel.sendKeys[0].key).toMatch(/^phs_[0-9A-Za-z]{32}$/);
+  return {
+    channelKey: channel.channelKey,
+    channelId: channel.channelId,
+    sendKey: channel.sendKeys[0].key,
+  };
 }
 
 async function sendMessage(
