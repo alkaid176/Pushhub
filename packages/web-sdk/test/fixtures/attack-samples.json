@@ -58,5 +58,20 @@
     "name": "task-list",
     "input": "- [x] 已完成\n- [ ] 待办",
     "expected": "<ul>\n<li> 已完成</li>\n<li> 待办</li>\n</ul>\n"
+  },
+  {
+    "name": "attr-style-overlay",
+    "input": "<div style=\"position:fixed;inset:0;z-index:9999;background:#fff\">覆盖</div>",
+    "expected": "<div>覆盖</div>"
+  },
+  {
+    "name": "attr-class-forgery",
+    "input": "<div class=\"error-bar\">伪造横幅</div>",
+    "expected": "<div>伪造横幅</div>"
+  },
+  {
+    "name": "svg-anchor-javascript",
+    "input": "<svg><a xlink:href=\"javascript:alert(1)\"><text>x</text></a></svg>",
+    "expected": "<p><svg><a target=\"_blank\" rel=\"noopener noreferrer\"><text>x</text></a></svg></p>\n"
   }
 ]
