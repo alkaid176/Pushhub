@@ -69,6 +69,9 @@ Webhook 发送方发出的消息，配置了同一通知密钥的所有客户端
 | 安卓端选原生 Kotlin（非 RN） | 后台常驻 WebSocket + 前台服务通知，原生最稳定可靠 | — Pending |
 | 历史消息存 DO 内置存储 | 不引入 D1/R2 额外复杂度，单群内查询天然高效 | ✓ Phase 1 验证：220 条补拉零丢失零重复 |
 | 自定义域名 pushhub.dyun.org 作为生产入口 | workers.dev 在国内被 SNI 阻断 + DNS 污染；自有域名经 CF 可正常解析 | ✓ Phase 1 UAT 确认：全链路经此域名验证通过 |
+| Web SDK 渲染消毒用 marked + DOMPurify（FORBID_TAGS + FORBID_ATTR 双层收敛） | 消息来自任意 Webhook 发送方；标签与属性双层禁用才真正收敛 UI 伪装攻击面（CR-01 教训：只禁标签时 style/class 属性穿透） | ✓ Phase 2 生产实证：15 条攻击样本 fixture + 生产字节 jsdom 直测全过（0.1.10） |
+| SDK 构建产物缓存参数 ?v= 由 build.mjs 构建期注入根版本号 | 人工同步纪律在 0.1.8 已实际脱钩（0.1.7 残留）；机制注入 + 恒一致断言双保险 | ✓ Phase 2 生产实证：0.1.9/0.1.10 连续两次部署 ?v= 恰一处与根 version 一致 |
+| SDK 连接状态机纯逻辑抽取（零平台 API）+ 构造容错 setTimeout(0) 延迟派发 | 状态机可被 Tauri/Android 复用；构造即连时序下同步 emitError 会在宿主 on() 注册前丢失（G-02-4 WR-04 根因） | ✓ Phase 2：畸形 serverUrl E2E 呈现 error 态不卡连接中（真浏览器） |
 
 ## Evolution
 
