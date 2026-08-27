@@ -8,7 +8,9 @@
  * D-21：消毒后链接统一强制 target=_blank + rel=noopener noreferrer
  * （afterSanitizeAttributes hook）——Webhook 消息链接不可信，防反向 tabnabbing。
  * tagName 两分支判定覆盖 SVG 命名空间锚点（G-02-2）；FORBID_TAGS 收敛
- * style/form/input/button 等非聊天语义标签的放行面（WR-02）。
+ * style/form/input/button 等非聊天语义标签的放行面（WR-02）；FORBID_ATTR
+ * 剥离 style/class/id 属性——内联 CSS 全屏覆盖层钓鱼与宿主类名/ID 伪造
+ * 系统 UI 的直通面（CR-01），标签收敛与属性收敛同等必要。
  *
  * 消息来自任意外部 Webhook 发送方，未经消毒的原始 HTML 直通 = 存储型 XSS
  * 直通所有客户端（CLAUDE.md 本域最高危项）——消息内容进 DOM 前必经本管道。
@@ -64,7 +66,13 @@ export function renderMarkdown(text: string): string {
   // WR-02：收敛放行面——非聊天语义标签（表单钓鱼/UI 伪装攻击面）一律禁用。
   // 已知取舍：GFM 任务列表复选框字形随 input 消失（文本保留，UAT 裁决明知
   // 取舍，attack-samples.json task-list 样本固化证据）。
+  // CR-01：DOMPurify 默认 profile 放行 style/class/id 属性——style 可渲染
+  // position:fixed 全屏覆盖层钓鱼、class 可命中宿主 CSS（如 error-bar）伪造
+  // 系统错误横幅。FORBID_ATTR 剥离三者；viewer 自身样式全部经由外层容器类名
+  // 施加（li.msg/msg-body），消息内容剥离不影响宿主渲染；marked 自身不产出
+  // 这三个属性，无兼容损失。
   return purify.sanitize(marked.parse(text, { async: false }), {
     FORBID_TAGS: ["style", "form", "input", "button", "select", "textarea", "label", "option"],
+    FORBID_ATTR: ["style", "class", "id"],
   });
 }
