@@ -7,7 +7,9 @@
  *  - 心跳周期经 fake timers 真实走通：30s 一 ping，字节逐字等于服务端
  *    auto-response 匹配串（Pitfall 4 回归）；pong 回喂后死线解除周期存活；
  *  - visibilitychange 监听注册（D-27 探活入口）与页面回前台立即探活；
- *  - destroy()/disconnect() 后无残留定时器、监听移除、不再创建 socket。
+ *  - destroy()/disconnect() 后无残留定时器、监听移除、不再创建 socket；
+ *  - 畸形 serverUrl（WebSocket 构造同步抛）容错（02-04 WR-04）：构造不抛，
+ *    延迟一跳后 error(fatal) + status offline，fatal 不重连。
  *
  * WebSocket 以 FakeWebSocket stub（记录 send/close，open/pong 事件由测试
  * 手动触发）——jsdom 环境无真实 WS 服务端。
@@ -115,6 +117,49 @@ describe("visibilitychange 接线（D-27 探活）", () => {
     expect(ws.closedWith).not.toBeNull(); // closeSocket(deadline) 已执行
     vi.advanceTimersByTime(60_000);
     expect(instances.length).toBe(2); // 自动重连恰一次
+  });
+});
+
+describe("畸形 serverUrl 容错（WR-04，02-04）", () => {
+  it("WebSocket 构造抛 SyntaxError：构造不抛，延迟一跳后 error(fatal, connect_failed) + status offline，不再创建 socket", () => {
+    let constructions = 0;
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        constructor(_url: string) {
+          constructions += 1;
+          throw new SyntaxError("invalid url");
+        }
+      },
+    );
+    const key = `phc_${"k".repeat(32)}`;
+    const hub = new PushHub("not a url", key); // 构造不抛（WR-04 核心）
+    activeHub = hub;
+
+    const errors: Array<{ message: string; code?: string; fatal?: boolean }> = [];
+    const statuses: string[] = [];
+    hub.on("error", (e) => errors.push(e));
+    hub.on("status", (s) => statuses.push(s));
+
+    // 构造期同步零事件——延迟一跳派发保证宿主 on() 注册先于事件（D-18 时序）。
+    expect(errors).toEqual([]);
+    expect(statuses).toEqual([]);
+
+    vi.advanceTimersByTime(0); // 触发 setTimeout(..., 0)
+    expect(constructions).toBe(1); // 恰一次构造尝试
+    expect(errors.length).toBe(1);
+    expect(errors[0].fatal).toBe(true);
+    expect(errors[0].code).toBe("connect_failed");
+    // 密钥纪律：错误文案不含 Channel Key 子串（wsUrl 路径段含密钥，不得内嵌）。
+    expect(errors[0].message).not.toContain("phc_");
+    expect(errors[0].message).not.toContain(key);
+    expect(statuses).toEqual(["offline"]);
+
+    // fatal 不重连：长窗口内不再创建新 socket、不再追加错误。
+    vi.advanceTimersByTime(120_000);
+    expect(constructions).toBe(1);
+    expect(errors.length).toBe(1);
+    expect(vi.getTimerCount()).toBe(0); // 无残留定时器
   });
 });
 

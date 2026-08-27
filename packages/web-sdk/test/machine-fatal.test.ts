@@ -1,11 +1,17 @@
 /**
- * 纯状态机 fatal 路径单测（02-02 Task 1，T-02-04 / D-07 客户端严格方向）。
+ * 纯状态机 fatal 路径单测（02-02 Task 1，T-02-04 / D-07 客户端严格方向；
+ * 02-04 Task 2 增 WS_FAIL——WR-04 畸形 serverUrl 容错）。
  *
  * v !== 1 的帧（parseServerFrame 判 fatal）→ emitError(fatal:true) +
  * closeSocket + emitStatus("offline")；此后任何 TIMER / WS_CLOSE / FRAME
  * 都不再输出 createSocket（不重连——服务端比客户端新，重连无意义，Pitfall 10
  * 方向记忆：服务端宽容忽略坏帧，客户端严格即断）。
  * CONNECT 仍可手动恢复（02-01 语义保持：用户显式 connect() 清除 fatal 态）。
+ *
+ * WS_FAIL（02-04 WR-04）：adapter 捕获 WebSocket 构造器同步抛（畸形
+ * serverUrl 唯一抛出源）后延迟派发的输入事件——与 v!==1 fatal 同族语义：
+ * 报错 + 停止 + 不复活（畸形 URL 是确定性配置错误，重试无意义）。仅
+ * connecting 态消费；其余态防御性忽略零动作。
  */
 import { describe, it, expect } from "vitest";
 import { createMachine, type MachineAction } from "../src/connection-machine";
@@ -77,5 +83,70 @@ describe("v!==1 fatal：断连 + 报错 + 不再重连（D-07）", () => {
     expect(
       acts.some((a) => a.kind === "emitStatus" && a.status === "connecting"),
     ).toBe(true);
+  });
+});
+
+describe("WS_FAIL：畸形 serverUrl 构造失败（WR-04，与 v!==1 fatal 同族语义）", () => {
+  it("connecting 态 WS_FAIL → emitError(fatal, code=connect_failed) + emitStatus offline + 不武装任何定时器", () => {
+    const m = createMachine();
+    m.input({ kind: "CONNECT" });
+    const acts = m.input({
+      kind: "WS_FAIL",
+      message: "failed to construct WebSocket for serverUrl",
+    });
+
+    const err = acts.find((a) => a.kind === "emitError");
+    expect(err).toBeDefined();
+    if (err?.kind === "emitError") {
+      expect(err.error.fatal).toBe(true);
+      expect(err.error.code).toBe("connect_failed");
+      expect(err.error.message).toBe("failed to construct WebSocket for serverUrl");
+    }
+    expect(
+      acts.some((a) => a.kind === "emitStatus" && a.status === "offline"),
+    ).toBe(true);
+    // 畸形 URL 是确定性配置错误：不武装重连定时器、不创建 socket。
+    expect(acts.some((a) => a.kind === "schedule")).toBe(false);
+    expect(acts.some((a) => a.kind === "createSocket")).toBe(false);
+    expect(m.status).toBe("offline");
+  });
+
+  it("WS_FAIL 后任何 TIMER/WS_CLOSE/FRAME 都零动作（不复活）", () => {
+    const m = createMachine();
+    m.input({ kind: "CONNECT" });
+    m.input({ kind: "WS_FAIL", message: "boom" });
+    const followups: MachineAction[] = [
+      ...m.input({ kind: "TIMER", timer: "reconnect" }),
+      ...m.input({ kind: "TIMER", timer: "heartbeat" }),
+      ...m.input({ kind: "TIMER", timer: "pongDeadline" }),
+      ...m.input({ kind: "TIMER", timer: "probe" }),
+      ...m.input({ kind: "WS_CLOSE" }),
+      ...m.input({ kind: "FRAME", result: { ok: true, frame: msgFrame(1) } }),
+    ];
+    expect(followups).toEqual([]);
+  });
+
+  it("idle 态 WS_FAIL 零动作（防御性忽略）", () => {
+    const m = createMachine();
+    expect(m.input({ kind: "WS_FAIL", message: "boom" })).toEqual([]);
+    expect(m.status).toBe("offline");
+  });
+
+  it("online 态 WS_FAIL 零动作（防御性忽略——机器只消费 connecting 期的构造失败）", () => {
+    const m = online();
+    expect(m.input({ kind: "WS_FAIL", message: "boom" })).toEqual([]);
+    expect(m.status).toBe("online");
+  });
+
+  it("offline 态（disconnect 后）WS_FAIL 零动作", () => {
+    const m = online();
+    m.input({ kind: "DISCONNECT" });
+    expect(m.input({ kind: "WS_FAIL", message: "boom" })).toEqual([]);
+  });
+
+  it("destroyed 态 WS_FAIL 零动作", () => {
+    const m = online();
+    m.input({ kind: "DESTROY" });
+    expect(m.input({ kind: "WS_FAIL", message: "boom" })).toEqual([]);
   });
 });
