@@ -245,7 +245,11 @@ async function handleDeleteChannel(
     // 不落 KV 删除：频道完整保留在列表，删除链可整链重试（幂等）。
     return errorEnvelope(500, "server_error", "Internal server error.");
   }
-  await deleteChannelKeys(env, record);
+  // CR-01 第 4 点/IN-04：purge 是网络往返——期间可能发生重置（ch: 换代）或
+  // 新建 Send Key。purge 后重读 id: 取最新 channelKey；deleteChannelKeys
+  // 内部另做 sk: 现扫权威快照并与快照取并集，共同缩窄 TOCTOU 窗口。
+  const fresh = await readChannelRecord(env, channelId);
+  await deleteChannelKeys(env, fresh ?? record);
   return new Response(null, { status: 204 });
 }
 
@@ -330,7 +334,8 @@ async function handleCreateSendKey(
 /**
  * DELETE /api/admin/channels/:channelId/send-keys/:key（D-32）三存储联动：
  *  1. sk: 预检归属（miss 或他人频道 -> 404，防跨频道探测）；
- *  2. KV 前两环（sk: delete + id: 重写，keys.ts revokeSendKeyRecord）；
+ *  2. KV 单键删除（keys.ts revokeSendKeyRecord——CR-01 后不再重写 id:，
+ *     无读-改-写竞态窗口）；
  *  3. DO /cleanup-rate 转发（rate_sends 行即时删除——转发模式照 index.ts
  *     既有先例；失败不阻断 204：残留行无害——键名永不复用 + 每日 alarm
  *     自然清扫兜底）。
@@ -347,7 +352,7 @@ async function handleRevokeSendKey(
     return NOT_FOUND();
   }
 
-  await revokeSendKeyRecord(env, channelId, key);
+  await revokeSendKeyRecord(env, key);
 
   try {
     const forward = new Request(`${INTERNAL_ORIGIN}/cleanup-rate`, {
