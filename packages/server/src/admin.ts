@@ -9,7 +9,7 @@
  *   DELETE /api/admin/channels/:channelId/send-keys/:key 吊销 -> 204（03-02，D-32）
  *   POST /api/admin/channels/:channelId/reset-channel-key 重置 Channel Key -> 201 {channelKey}（03-03，D-33——KV 写先 DO 踢后）
  *   DELETE /api/admin/channels/:channelId               删除频道 -> 204（03-03，D-34——DO purge 先 KV 键删后，one-way）
- *   参数化骨架的 messages 分支占位 404（03-04 扩展）
+ *   GET  /api/admin/channels/:channelId/messages?before=&limit= 消息历史 -> 200 {messages, has_more, oldest_kept_seq}（03-04，D-36——X-PH-Verified 转发 DO /history）
  *
  * Admin Key 鉴权（D-13）：Authorization: Bearer <ADMIN_KEY>（Worker secret，
  * wrangler secret put 写入）。两段式常时比较（Pattern 6）：先比长度（不同直接
@@ -170,8 +170,10 @@ export async function handleAdminApi(request: Request, env: Env): Promise<Respon
   if (sub === undefined && tail === undefined && request.method === "DELETE") {
     return handleDeleteChannel(env, channelId);
   }
+  if (sub === "messages" && tail === undefined && request.method === "GET") {
+    return handleGetMessages(request, env, channelId);
+  }
 
-  // messages 分支留 03-04（参数化路由骨架其余分支已全部落位）。
   return NOT_FOUND();
 }
 
@@ -245,6 +247,32 @@ async function handleDeleteChannel(
   }
   await deleteChannelKeys(env, record);
   return new Response(null, { status: 204 });
+}
+
+/**
+ * GET /api/admin/channels/:channelId/messages?before=&limit=（03-04，D-36
+ * 最后一条参数化路由，ADM-03 排障入口）：读 id:（经 normalize，miss -> 404
+ * 不触 DO——T-03-17 越权读取防线 + T-03-19 探测面统一文案）→ 原查询串
+ * 透传转发 DO GET /history（before/limit 原样到达 DO——数值钳制在 DO 层
+ * 单点，本层不重复解析避免两处钳制漂移）→ 直接返回 DO 响应。
+ * 行映射与响应契约在 DO 侧单点（{messages, has_more, oldest_kept_seq}，
+ * messages 元素与扇出 MessageFrame 逐字段同构——含 answered 四字段）。
+ */
+async function handleGetMessages(
+  request: Request,
+  env: Env,
+  channelId: string,
+): Promise<Response> {
+  const record = await readChannelRecord(env, channelId);
+  if (record === null) {
+    return NOT_FOUND();
+  }
+  const search = new URL(request.url).search;
+  const forward = new Request(`${INTERNAL_ORIGIN}/history${search}`, {
+    method: "GET",
+    headers: { [VERIFIED_HEADER]: "1" },
+  });
+  return env.CHANNELS.getByName(channelId).fetch(forward);
 }
 
 /**

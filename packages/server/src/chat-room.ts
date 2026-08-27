@@ -10,6 +10,8 @@
  *    accept 成功后立即推送首拉 history 帧（最近 INITIAL_FETCH 条，D-09）
  *  - webSocketMessage：validateInboundFrame 白名单校验（v:1/type/since/limit）
  *    → sync 补拉（keyset 翻页 + limit 钳制 + oldest_kept_seq，D-10/D-11）
+ *  - GET /history 内部请求（03-04，D-36）：admin 排障用 keyset 倒序翻页
+ *    （before 游标 + limit 钳制 + oldest_kept_seq；Worker admin 鉴权后转发）
  *
  * 内存字段一律视为可丢弃缓存：休眠唤醒即清空，可从 getWebSockets / attachment /
  * SQLite 重建（PITFALLS 2.2）。
@@ -179,6 +181,35 @@ function clampSyncLimit(limit: number | undefined): number {
   return limit;
 }
 
+// ---- admin 历史翻页常量（03-04，D-36）：与 shared SYNC_*（WS 补拉域）刻意
+// 分离——admin 排障是独立消费者（缺省 50 非 200），两域参数语义各自演化，
+// 复用同一常量会把 WS 冻结契约牵连进 admin 宽松语义。----
+const ADMIN_HISTORY_LIMIT_DEFAULT = 50;
+const ADMIN_HISTORY_LIMIT_MAX = 500;
+
+/**
+ * admin /history 的 limit 解析与钳制（03-04，D-36）：null / 非数字 -> 缺省
+ * 50；钳制 [1, 500]。与 clampSyncLimit（WS sync 域——越界回 invalid_frame 的
+ * 冻结契约）刻意分开：admin 查询参数是宽松语义（错值归缺省不报错），独立
+ * 小函数避免两域契约互相牵连（T-03-18：任何值都不越 SQL 层界）。
+ */
+function clampAdminLimit(raw: string | null): number {
+  if (raw === null) {
+    return ADMIN_HISTORY_LIMIT_DEFAULT;
+  }
+  const n = Number(raw);
+  if (Number.isNaN(n)) {
+    return ADMIN_HISTORY_LIMIT_DEFAULT;
+  }
+  if (n > ADMIN_HISTORY_LIMIT_MAX) {
+    return ADMIN_HISTORY_LIMIT_MAX;
+  }
+  if (n < 1) {
+    return 1;
+  }
+  return n;
+}
+
 export class ChatRoom extends DurableObject {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -215,6 +246,9 @@ export class ChatRoom extends DurableObject {
     }
     if (url.pathname === "/purge" && request.method === "POST") {
       return this.handlePurge();
+    }
+    if (url.pathname === "/history" && request.method === "GET") {
+      return this.handleHistory(url);
     }
     return errorEnvelope(404, "not_found", "Unknown internal route.");
   }
@@ -301,6 +335,60 @@ export class ChatRoom extends DurableObject {
    * 两句 exec 之间零 await = 自动原子提交（Pattern 3）；
  * 游标同步 .one()/toArray() 收完，不跨 await 持有（Pitfall 9）。
  */
+  /**
+   * admin 消息历史查询（03-04，D-36，ADM-03 排障入口）：keyset 倒序翻页
+   * （最新在最上），供 Worker 转发（本路由绝不直连公网——X-PH-Verified
+   * 前置 + binding 可达性双防线，T-03-17）。
+   *  - before === null（或非数字，宽松语义同 limit）：首页最新 limit 条；
+   *    否则 WHERE seq < before（绑定参数 ?n 占位，禁 OFFSET，T-03-18）；
+   *  - limit 经 clampAdminLimit（缺省 50 / 钳 [1,500]，NaN 归缺省）；
+   *  - LIMIT n+1 多取 1 条判 has_more 后裁掉（sendHistory 同款技巧）；
+   *  - oldest_kept_seq = MIN(seq)（空表 0——D-10 诚实缺口语义，管理页据此
+   *    渲染「更早的消息已被清理」分隔线）；
+   *  - 行映射复用 rowToMessageFrame：与扇出帧逐字段同构（含 answered 四
+   *    字段）——SC3 回复状态零额外映射（新写映射函数即制造双管道漂移）。
+   * 全程同步游标 .toArray()/.one() 即收不跨 await（SQL 纪律，Pitfall 9）。
+   */
+  private handleHistory(url: URL): Response {
+    const limit = clampAdminLimit(url.searchParams.get("limit"));
+    const beforeRaw = url.searchParams.get("before");
+    const beforeParsed = beforeRaw === null ? null : Number(beforeRaw);
+    // 非数字 before 归首页（与 limit 的宽松语义对齐——admin 排障入口不报错）。
+    const before =
+      beforeParsed !== null && !Number.isNaN(beforeParsed) ? beforeParsed : null;
+
+    const oldestRow = this.ctx.storage.sql
+      .exec("SELECT MIN(seq) AS m FROM messages")
+      .one() as { m: number | null };
+
+    const fetched = (
+      before === null
+        ? this.ctx.storage.sql.exec(
+            `SELECT ${MESSAGE_COLUMNS} FROM messages ORDER BY seq DESC LIMIT ?1`,
+            limit + 1,
+          )
+        : this.ctx.storage.sql.exec(
+            `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq < ?1 ORDER BY seq DESC LIMIT ?2`,
+            before,
+            limit + 1,
+          )
+    ).toArray() as unknown as MessageRow[];
+    const hasMore = fetched.length > limit;
+    const rows = hasMore ? fetched.slice(0, limit) : fetched;
+
+    return new Response(
+      JSON.stringify({
+        messages: rows.map(rowToMessageFrame),
+        has_more: hasMore,
+        oldest_kept_seq: oldestRow.m ?? 0,
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    );
+  }
+
   private async handlePublish(request: Request): Promise<Response> {
     // KEY-05 限流先行（Pattern 5）：按 Send Key 固定窗口计数，先于校验、
     // seq 分配与落库——被拒消息不消耗 seq、不产生 messages 表写入。
