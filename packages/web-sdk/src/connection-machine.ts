@@ -22,6 +22,9 @@
  *    翻页达 SYNC_PAGE_MAX=100 放弃并 emitError（T-02-06 防服务端异常死循环）；
  *  - v!==1 fatal 帧 → emitError(fatal) + closeSocket + offline，此后零动作
  *    不再重连（D-07 客户端严格；服务端宽容忽略坏帧——方向相反）；
+ *  - WS_FAIL（WR-04/02-04）：WebSocket 构造器同步抛（畸形 serverUrl）→
+ *    emitError(fatal, code=connect_failed) + offline，零动作不复活
+ *    （确定性配置错误，重试无意义）；
  *  - 心跳：WS_OPEN arm(heartbeat, 30s)；TIMER(heartbeat) → sendPing +
  *    arm(pongDeadline, 10s) + re-arm(heartbeat)；FRAME(pong) → cancel 两类死线；
  *    pong/探活死线超时 → closeSocket(deadline) + 退避重连（T-02-08 假活防线）；
@@ -80,6 +83,7 @@ export type MachineEvent =
   | { kind: "DESTROY" }
   | { kind: "WS_OPEN" }
   | { kind: "WS_CLOSE" }
+  | { kind: "WS_FAIL"; message: string }
   | { kind: "FRAME"; result: FrameResult }
   | { kind: "VISIBILITY"; visible: boolean }
   | { kind: "TIMER"; timer: TimerKind };
@@ -307,6 +311,20 @@ export function createMachine(options: MachineOptions = {}): ConnectionMachine {
           attempt += 1;
         }
         // reconnecting（deadline 路径已自行调度）/offline/destroyed：零动作。
+        return out;
+      }
+      case "WS_FAIL": {
+        // WR-04（02-04）：畸形 serverUrl 使 WebSocket 构造器同步抛——adapter
+        // 捕获后延迟派发本事件。确定性配置错误，重试无意义：fatal 语义与
+        // v!==1 同族（报错 + 停止 + 不复活，D-07 方向），不武装任何定时器。
+        // 仅 connecting 态消费；其余态防御性忽略零动作。
+        if (state !== "connecting") return out;
+        cancelAllTimers(out);
+        out.push({
+          kind: "emitError",
+          error: { message: event.message, code: "connect_failed", fatal: true },
+        });
+        enter("offline", out);
         return out;
       }
       case "TIMER": {

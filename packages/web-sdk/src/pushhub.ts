@@ -26,6 +26,9 @@
  *    机器以"连接前游标"为 sync 基准补拉，去重窗口消化交叠（Pitfall 5）；
  *  - 意外 close → full jitter 指数退避重连（cap 60_000ms，SC2）；
  *  - v!==1 fatal 帧 → error(fatal) + 断连且不再重连（D-07 客户端严格）；
+ *  - 畸形 serverUrl → WebSocket 构造器同步抛被 openSocket 捕获，经
+ *    setTimeout(0) 延迟派发 WS_FAIL → error(fatal, connect_failed) +
+ *    status offline，不重连（WR-04/02-04）；
  *  - 错误事件载荷绝不包含 Channel Key 子串（密钥即身份，不进日志/错误——
  *    与 server/src/index.ts 同款纪律）。
  */
@@ -228,7 +231,24 @@ export class PushHub {
         // 已关闭。
       }
     }
-    const ws = new WebSocket(this.wsUrl);
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(this.wsUrl);
+    } catch {
+      // WR-04（02-04）：畸形 serverUrl 使 WebSocket 构造器同步抛（唯一抛出
+      // 源——构造函数不做 URL 预校验双路径）。不得同步 dispatch：构造即连
+      // （D-18）时序下，构造函数内的同步 emitError 会在宿主 on() 注册前丢失
+      // （查看器卡"连接中"的另一半根因）——延迟一跳派发，保证构造已返回、
+      // 宿主监听已挂。this.ws 保持 null。错误文案为静态英文描述，不内嵌
+      // wsUrl（路径段含 Channel Key——密钥即身份，不进错误载荷）。
+      setTimeout(() => {
+        this.dispatch({
+          kind: "WS_FAIL",
+          message: "failed to construct WebSocket for serverUrl",
+        });
+      }, 0);
+      return;
+    }
     this.ws = ws;
     // 监听器在 new 后同步挂齐（attach-before-trigger：服务端在升级路径即推
     // 首拉 history，open 回调后再挂监听会丢即发即弃首帧——smoke.mjs 教训）。
