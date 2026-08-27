@@ -48,6 +48,16 @@
  *    3 条后 GET messages?before=<第 2 条 seq> 返回恰 [seq1]（keyset 抽查——
  *    完整矩阵在 admin-history.test.ts 集成测试）。
  *
+ * 切片五（03-05，D-41 全链路 journey——CONTEXT specifics 核心用户旅程的
+ * 自动化串联）：单个 test 走完管理员完整生命周期，步骤间不复用独立 test
+ * 的 fixture（本 test 自建自删自证，删除即清理）：
+ *  登录 → UI 建频道（唯一名）→ 片段卡三块 → UI 建 Send Key（标签
+ *  journey-bot）→ 行与掩码 → 经该 Key 发消息（200）→ 历史区倒序首条可见
+ *  +「未回复」徽标 → pageB viewer URL 参数连接 online → 重置确认框 →
+ *  pageB 离开 online + 新 Key 明文展示块 → pageB 新 Key 重连（历史保留，
+ *  首拉含前述消息）→ 吊销该 Key（确认框）→ 该 Key 发送 401 → 删除确认框
+ *  输入频道名前缀 → 确认 → 频道从列表消失 + 详情空态。
+ *
  * 每个 test 结束断言无 CSP 违规（Pitfall 3 警示信号：页面渲染但零交互）：
  * 收集 console 错误与 pageerror，出现 CSP 关键字即 fail。注意 401/400 fetch 在
  * Chromium 会记 console error（Failed to load resource…）——那是正常网络
@@ -795,4 +805,196 @@ test("D-40 空态与 API before 翻页抽查：空频道空态文案；before=<�
   expect(body.oldest_kept_seq).toBe(1);
 
   expectNoCspViolations(consoleErrors, pageErrors);
+});
+
+// ---------------------------------------------------------------------------
+// 切片五（03-05，D-41——核心用户旅程全链路串联，单 test 九步）
+// ---------------------------------------------------------------------------
+
+test("D-41 全链路 journey：登录→建频道→建 Send Key→发消息→历史→重置踢连→吊销 401→删除", async ({
+  page,
+  context,
+  request,
+}) => {
+  const { consoleErrors, pageErrors } = collectPageDiagnostics(page);
+  const pageB = await context.newPage();
+  const diagB = collectPageDiagnostics(pageB);
+
+  // ① 登录（正确 key）。
+  await loginAdmin(page);
+
+  // ② 建频道（唯一名，UI 路径）——自建自删自证，无 fixture 依赖。
+  const name = `e2e-journey-${Date.now()}`;
+  await page.locator("#channel-name-input").fill(name);
+  await page.locator("#btn-create").click();
+  const item = page.locator("#channel-list .channel-item", { hasText: name });
+  await expect(item).toHaveCount(1);
+  await expect(item).toHaveAttribute("aria-current", "true");
+
+  // ③ 片段卡三块：发送方 curl / 客户端接入（Channel Key + 服务端地址）/ viewer 直达。
+  const card = page.locator('[data-testid="snippet-card"]');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("已创建「" + name + "」");
+  const blocks = card.locator(".snippet-block");
+  await expect(blocks).toHaveCount(3);
+  await expect(
+    blocks.nth(0).locator(".snippet-block-label"),
+  ).toHaveText("发送方接入（给机器人/脚本）");
+  await expect(
+    blocks.nth(1).locator(".snippet-block-label"),
+  ).toHaveText("客户端接入（给接收端配置）");
+  await expect(blocks.nth(2).locator(".snippet-block-label")).toHaveText(
+    "网页端直达",
+  );
+  const curlText = await blocks.nth(0).locator(".snippet-code").textContent();
+  expect(curlText).toContain("/api/send");
+  const link = card.locator("a[target='_blank']");
+  await expect(link).toHaveCount(1);
+  const href = await link.getAttribute("href");
+  expect(href).toContain("server=");
+  expect(href).toContain("key=");
+
+  // ④ 建 Send Key（标签 journey-bot，UI 路径）。
+  await page.locator("#sendkey-label-input").fill("journey-bot");
+  await page.locator("#btn-create-sendkey").click();
+
+  // ⑤ 行与掩码：六要素行含标签，密钥默认 ^phs_.{3}….{4}$ 掩码。
+  const row = page.locator('[data-testid="sendkey-row"]', {
+    hasText: "journey-bot",
+  });
+  await expect(row).toHaveCount(1);
+  const masked = await row.locator(".key-value").textContent();
+  expect(masked).toMatch(/^phs_.{3}….{4}$/);
+
+  // 完整 Key 从 Send Key 片段卡 curl 提取（201 唯一完整返回点——旅程中
+  // 管理员复制片段交给机器人接入方即此路径）。频道片段卡（pendingSnippet）
+  // 与 Send Key 片段卡同时挂在详情面板——按标题过滤到唯一目标。
+  const skCard = page.locator('[data-testid="snippet-card"]', {
+    hasText: "已创建 Send Key「journey-bot」",
+  });
+  await expect(skCard).toHaveCount(1);
+  const skCurl = await skCard.locator(".snippet-code").textContent();
+  const keyMatch = skCurl.match(/Bearer (phs_[0-9A-Za-z]{32})/);
+  expect(keyMatch).not.toBeNull();
+  const journeyKey = keyMatch![1];
+
+  // ⑥ 经该 Send Key 发 1 条消息（200）——旅程核心环节：机器人 webhook 推送。
+  const sendResp = await request.post(`${BASE}/api/send`, {
+    headers: {
+      Authorization: `Bearer ${journeyKey}`,
+      "content-type": "application/json",
+    },
+    data: { text: "journey core message" },
+  });
+  expect(sendResp.status()).toBe(200);
+
+  // ⑦ 展开历史区：该消息倒序首条可见 +「未回复」徽标（排障入口）。
+  await page.locator("#history-details summary").click();
+  const histList = page.locator("#history-list");
+  await expect(histList.locator('[data-testid="history-msg"]')).toHaveCount(1);
+  await expect(histList.locator(".hist-msg").first()).toContainText(
+    "journey core message",
+  );
+  await expect(
+    histList.locator(".hist-msg").first().locator(".badge-unanswered"),
+  ).toHaveText("未回复");
+
+  // Channel Key 经眼睛按钮揭示（D-29 路径——viewer 接入配置的取值方式）。
+  const ckBlock = page.locator("#channel-detail .detail-block").first();
+  await ckBlock.locator(".icon-btn").click();
+  const channelKey = await ckBlock.locator(".key-value").textContent();
+  expect(channelKey).toMatch(/^phc_[0-9A-Za-z]{32}$/);
+
+  // ⑧ pageB viewer 以 URL 参数连接（客户端接入路径）→ online。
+  await pageB.goto(
+    `/?server=${encodeURIComponent(BASE)}&key=${encodeURIComponent(channelKey!)}`,
+  );
+  await waitViewerOnline(pageB);
+
+  // ⑨ 重置 Channel Key：确认框（逐字契约抽查）→ 确认。
+  await page.locator("#btn-reset-channel-key").click();
+  await expect(page.locator("#reset-dialog")).toBeVisible();
+  await expect(page.locator("#reset-dialog-body")).toContainText(
+    "最长约 1 分钟",
+  );
+  await page.locator("#btn-reset-confirm").click();
+
+  // ⑩ 断言三态其一/其二：pageB 被踢离开 online + 新 Key 明文展示块出现。
+  await pageB.waitForFunction(
+    () =>
+      (document.getElementById("status-dot")?.className ?? "").includes(
+        "dot-online",
+      ) === false,
+    null,
+    { timeout: 15_000 },
+  );
+  const display = page.locator('[data-testid="new-key-display"]');
+  await expect(display).toBeVisible();
+  const newKey = await display.locator(".key-value").first().textContent();
+  expect(newKey).toMatch(/^phc_[0-9A-Za-z]{32}$/);
+  expect(newKey).not.toBe(channelKey);
+
+  // ⑪ 三态其三：pageB 以新 Key 重连 online——历史保留（首拉含 ⑥ 的消息）。
+  await pageB.goto(
+    `/?server=${encodeURIComponent(BASE)}&key=${encodeURIComponent(newKey!)}`,
+  );
+  await waitViewerOnline(pageB);
+  await expect(
+    pageB.locator("#messages .msg", { hasText: "journey core message" }),
+  ).toHaveCount(1);
+
+  // ⑫ 吊销该 Send Key（确认框：标题含标签——有标签 Key 显示标签而非
+  // 掩码（openRevokeDialog：rec.label ? label : mask），+ 逐字契约正文）。
+  await page
+    .locator('[data-testid="sendkey-row"]', { hasText: "journey-bot" })
+    .locator(".revoke-btn")
+    .click();
+  await expect(page.locator("#revoke-dialog")).toBeVisible();
+  await expect(page.locator("#revoke-dialog-title")).toContainText(
+    "吊销 Send Key「journey-bot」？",
+  );
+  await expect(page.locator("#revoke-dialog-body")).toContainText(
+    "此操作不可撤销",
+  );
+  await page.locator("#btn-revoke-confirm").click();
+  await expect(
+    page.locator('[data-testid="sendkey-row"]', { hasText: "journey-bot" }),
+  ).toHaveCount(0);
+
+  // ⑬ 被吊销 Key 下次调用即 401（泄露不互伤——本频道唯一业务 Key 已废）。
+  const denied = await request.post(`${BASE}/api/send`, {
+    headers: {
+      Authorization: `Bearer ${journeyKey}`,
+      "content-type": "application/json",
+    },
+    data: { text: "should be rejected" },
+  });
+  expect(denied.status()).toBe(401);
+  expect(((await denied.json()) as { error: { code: string } }).error.code).toBe(
+    "invalid_key",
+  );
+
+  // ⑭⑮ 删除确认框：输入频道名前缀启用 → 确认（one-way 操作的旅程终点）。
+  await page.locator("#btn-delete-channel").click();
+  const dlg = page.locator("#delete-dialog");
+  await expect(dlg).toBeVisible();
+  await expect(dlg.locator("#delete-dialog-title")).toContainText(
+    `删除频道「${name}」`,
+  );
+  const delBtn = page.locator("#btn-delete-confirm");
+  await expect(delBtn).toBeDisabled();
+  await dlg.locator("#delete-name-input").fill(name.slice(0, 3));
+  await expect(delBtn).toBeEnabled();
+  await delBtn.click();
+
+  // ⑯ 频道从列表消失 + 详情空态（本 test 自建的频道就此清理，零残留）。
+  await expect(
+    page.locator("#channel-list .channel-item", { hasText: name }),
+  ).toHaveCount(0);
+  await expect(page.locator("#channel-detail")).toContainText(
+    "在左侧选择一个频道查看详情。",
+  );
+
+  expectNoCspViolations(consoleErrors, pageErrors);
+  expectNoCspViolations(diagB.consoleErrors, diagB.pageErrors);
 });
