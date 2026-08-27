@@ -203,3 +203,31 @@ test("SC1+SC3+D-24：URL 参数接入 → Markdown 渲染 → 攻击样本 → l
   });
   expect(await page.locator("#messages li.separator").count()).toBe(1);
 });
+
+test("WR-03：localStorage 全禁环境查看器正常加载（回退缺省，无未捕获异常）", async ({
+  page,
+}) => {
+  // 收集页面未捕获错误（断言点之一：读取侧无防护时 SecurityError 直通夭折）。
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err));
+
+  // addInitScript 在页面任何脚本之前运行（Playwright 语义）——读取拦截先于
+  // viewer.js 执行，模拟浏览器存储策略全禁（隐私模式 / cookie 策略全禁）。
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new DOMException("denied", "SecurityError");
+      },
+    });
+  });
+
+  await page.goto("/");
+
+  // 优先级链 url 参数 || localStorage || 缺省：localStorage 抛异常时 server
+  // 回退页面 origin、key 留空（免填功能降级，与写入侧防护对齐）。
+  await expect(page.locator("#server-url")).toHaveValue(BASE);
+  await expect(page.locator("#channel-key")).toHaveValue("");
+  // D-24 既有语义不变：无参数不自动连接。
+  expect(await page.locator("#status-text").textContent()).toBe("未连接");
+  expect(pageErrors).toEqual([]);
+});
