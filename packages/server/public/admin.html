@@ -171,8 +171,31 @@
       }
       .copy-btn { background: none; border: 1px solid canvastext; border-radius: 4px; padding: 4px 8px; color: canvastext; min-height: 24px; }
       .sendkey-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-      .sendkey-label { color: graytext; font-size: 13.6px; }
+      .sendkey-label { font-size: 13.6px; }
+      .sendkey-label.unnamed { color: graytext; }
       .sendkey-date { color: graytext; }
+
+      /* Send Key 管理区（03-02，D-30/D-31/D-32）：创建表单 + 上限提示 + 空态。 */
+      .sendkey-form-row { display: flex; gap: 8px; margin-top: 8px; }
+      .sendkey-form-row input { flex: 1; }
+      .limit-hint { color: #9a9a9a; font-size: 13.6px; line-height: 1.45; margin: 4px 0 0; }
+      .sendkey-empty { color: graytext; font-size: 13.6px; line-height: 1.45; margin: 8px 0 0; }
+
+      /* 吊销按钮（destructive 保留清单第 2 项：红字文字按钮）。 */
+      .revoke-btn { background: none; border: none; padding: 4px 8px; color: #c0392b; min-height: 24px; }
+
+      /* 原生 dialog 确认框（UI-SPEC Interaction #3：零依赖焦点陷阱 + Esc 关闭）。 */
+      dialog.confirm-dialog {
+        border: 1px solid canvastext;
+        border-radius: 8px;
+        padding: 8px 16px;
+        background: canvas;
+        color: canvastext;
+        max-width: 480px;
+      }
+      dialog.confirm-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+      .dialog-body { font-size: 13.6px; line-height: 1.45; margin: 8px 0; }
+      .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
       /* 接入片段卡（D-39：创建成功的临门一脚）。 */
       .snippet-card { border: 1px solid canvastext; border-radius: 8px; padding: 8px 16px; margin-top: 16px; }
@@ -257,6 +280,18 @@
         </section>
       </div>
     </main>
+
+    <!-- 吊销 Send Key 确认框（03-02，D-32——UI-SPEC Destructive 逐字契约）：
+         原生 <dialog> 零依赖（内置焦点陷阱与 Esc 关闭）；标题含用户可控标签，
+         由 admin.js 一律 textContent 填充（T-03-09）。 -->
+    <dialog id="revoke-dialog" class="confirm-dialog" aria-labelledby="revoke-dialog-title">
+      <h2 id="revoke-dialog-title"></h2>
+      <p id="revoke-dialog-body" class="dialog-body"></p>
+      <div class="dialog-actions">
+        <button type="button" id="btn-revoke-cancel" class="text-btn">取消</button>
+        <button type="button" id="btn-revoke-confirm" class="revoke-btn">确认吊销</button>
+      </div>
+    </dialog>
 
     <!-- 眼睛图标（D-29）：inline SVG 是标记非脚本，CSP script-src 'self' 兼容；
          <template> 克隆取图，全程无 innerHTML。 -->

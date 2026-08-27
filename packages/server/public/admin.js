@@ -1,5 +1,5 @@
 /**
- * PushHub 管理页逻辑（03-01 Task 2，D-28/D-29/D-37/D-38/D-39）。
+ * PushHub 管理页逻辑（03-01 Task 2，D-28/D-29/D-37/D-38/D-39；03-02 Send Key 管理）。
  *
  * 本切片职责：
  *  - 登录屏障（D-28）：载入无 pushhub.admin 存储 → 仅登录卡；有存储 → 主界面
@@ -8,10 +8,16 @@
  *    片段卡（D-39 三块：curl / Channel Key 明文 / viewer 直达链接）。
  *  - 密钥行（D-29）：掩码 key.slice(0,7)+"…"+key.slice(-4)；眼睛揭示切换
  *    （不跨刷新/跨选择持久）；复制写完整密钥 + data-copied 反馈。
+ *  - Send Key 管理（03-02，D-30/D-31/D-32）：创建表单（label 可选 ≤64）→
+ *    201 后片段卡仅第 1 块；列表六要素行（标签/未命名 + 掩码 + 日期 + 眼睛 +
+ *    复制 + 吊销红字）；达 10 个按钮 disabled + 上限提示；吊销走原生 dialog
+ *    确认框（逐字文案）→ DELETE 204 → 行消失；400 send_key_limit 经错误条
+ *    透传（UI 上限态与 API 检查双保险）。
  *
  * 安全纪律：
- *  - 全文件零 innerHTML——频道名/日期/密钥/错误消息一律 textContent（T-03-02）；
- *    眼睛图标经 <template> 克隆（inline SVG 是标记非脚本，CSP 兼容）。
+ *  - 全文件零 innerHTML——频道名/标签/日期/密钥/错误消息/确认框文案一律
+ *    textContent（T-03-02/T-03-09）；眼睛图标经 <template> 克隆（inline SVG
+ *    是标记非脚本，CSP 兼容）。
  *  - 全部 API 同源相对路径 + Authorization: Bearer 头（无 CORS/CSRF 面）；
  *    鉴权经服务端 checkAdminAuth（T-03-01），本页不新增路由。
  *  - localStorage 键 pushhub.admin（独立于 viewer 两键），读写均 try/catch
@@ -21,6 +27,8 @@
 "use strict";
 (function () {
   var LS_ADMIN = "pushhub.admin";
+  /** 每频道 Send Key 上限（D-31，与服务端 keys.ts SEND_KEY_LIMIT 同值约定）。 */
+  var SEND_KEY_LIMIT = 10;
 
   var loginForm = document.getElementById("login-form");
   var adminKeyInput = document.getElementById("admin-key-input");
@@ -36,12 +44,21 @@
   var btnRefresh = document.getElementById("btn-refresh");
   var btnLogout = document.getElementById("btn-logout");
   var eyeIconTpl = document.getElementById("eye-icon");
+  var revokeDialog = document.getElementById("revoke-dialog");
+  var revokeDialogTitle = document.getElementById("revoke-dialog-title");
+  var revokeDialogBody = document.getElementById("revoke-dialog-body");
+  var btnRevokeCancel = document.getElementById("btn-revoke-cancel");
+  var btnRevokeConfirm = document.getElementById("btn-revoke-confirm");
 
   var adminKey = null;
   var channels = [];
   var selectedId = null;
   /** 刚创建频道的接入片段数据（D-39：Send/Channel Key 明文一次性展示，关闭即弃）。 */
   var pendingSnippet = null;
+  /** 刚创建 Send Key 的片段数据（D-30：仅第 1 块 curl，关闭即弃）。 */
+  var pendingSendKeySnippet = null;
+  /** 待确认吊销的 Send Key（dialog 打开期间持有，关闭即弃）。 */
+  var pendingRevoke = null;
 
   // ---- localStorage（WR-03：读写均 try/catch；存储不可用时降级为会话内存态） ----
 
@@ -120,6 +137,32 @@
     });
   }
 
+  /** 响应体（可能空/非 JSON）安全解析为 {resp, json} 对。 */
+  function fetchJsonPair(resp) {
+    return resp
+      .json()
+      .catch(function () {
+        return null;
+      })
+      .then(function (json) {
+        return { resp: resp, json: json };
+      });
+  }
+
+  /** 重拉频道列表并整体重渲染（创建/吊销后的统一刷新路径）。 */
+  function refreshChannels(actionLabel) {
+    renderListLoading();
+    fetchChannelsWith(adminKey)
+      .then(function (r) {
+        if (r.resp.status === 200 && r.json && Array.isArray(r.json.channels)) {
+          setChannels(r.json.channels);
+        } else {
+          handleApiFailure(r.resp, r.json, actionLabel);
+        }
+      })
+      .catch(networkError);
+  }
+
   // ---- 屏幕切换（D-28 登录屏障） ----
 
   function enterLoginScreen() {
@@ -182,16 +225,11 @@
   }
 
   /**
-   * 密钥行组件（D-29）：[掩码 mono] [眼睛按钮 inline SVG] [复制按钮]，gap 8px。
-   * 揭示切换走 textContent（禁 innerHTML 写密钥）；揭示态不跨刷新/跨选择持久
-   * （重渲染即回掩码——组件局部状态，随行销毁）。
+   * 眼睛揭示按钮（D-29，Channel Key 行与 Send Key 行共用）：点击切换目标
+   * value 元素的掩码/明文（textContent 切换，禁 innerHTML 写密钥）；揭示态
+   * 不跨刷新/跨选择持久（随行销毁的组件局部状态）。
    */
-  function buildKeyRow(key) {
-    var row = document.createElement("div");
-    row.className = "key-row";
-    var value = document.createElement("span");
-    value.className = "key-value mono";
-    value.textContent = maskKey(key);
+  function buildEyeButton(valueEl, key) {
     var revealed = false;
     var eye = document.createElement("button");
     eye.type = "button";
@@ -202,16 +240,42 @@
     }
     eye.addEventListener("click", function () {
       revealed = !revealed;
-      value.textContent = revealed ? key : maskKey(key);
+      valueEl.textContent = revealed ? key : maskKey(key);
       eye.setAttribute("aria-label", revealed ? "隐藏完整密钥" : "显示完整密钥");
     });
+    return eye;
+  }
+
+  /**
+   * 密钥行组件（D-29）：[掩码 mono] [眼睛按钮 inline SVG] [复制按钮]，gap 8px。
+   */
+  function buildKeyRow(key) {
+    var row = document.createElement("div");
+    row.className = "key-row";
+    var value = document.createElement("span");
+    value.className = "key-value mono";
+    value.textContent = maskKey(key);
     row.appendChild(value);
-    row.appendChild(eye);
+    row.appendChild(buildEyeButton(value, key));
     row.appendChild(buildCopyButton(key));
     return row;
   }
 
-  // ---- 接入片段卡（D-39：三块各自带独立复制按钮） ----
+  // ---- 接入片段卡（D-39：三块各自带独立复制按钮；03-02 增仅第 1 块变体） ----
+
+  /** curl 发送方接入示例文本（D-39 第 1 块 / D-30 新 Send Key 片段共用构造器）。 */
+  function buildCurlText(sendKey) {
+    return (
+      "curl -X POST " +
+      window.location.origin +
+      "/api/send \\\n" +
+      '  -H "Authorization: Bearer ' +
+      sendKey +
+      '" \\\n' +
+      '  -H "Content-Type: application/json" \\\n' +
+      '  -d \'{"title": "Hello", "text": "来自 PushHub 的第一条消息"}\''
+    );
+  }
 
   function snippetBlock(heading, textToCopy) {
     var block = document.createElement("div");
@@ -256,15 +320,7 @@
     card.appendChild(title);
 
     // 第 1 块 · 发送方接入（给机器人/脚本）：curl 含 {origin}/api/send 与 Bearer Send Key。
-    var curl =
-      "curl -X POST " +
-      origin +
-      "/api/send \\\n" +
-      '  -H "Authorization: Bearer ' +
-      s.sendKey +
-      '" \\\n' +
-      '  -H "Content-Type: application/json" \\\n' +
-      '  -d \'{"title": "Hello", "text": "来自 PushHub 的第一条消息"}\'';
+    var curl = buildCurlText(s.sendKey);
     var b1 = snippetBlock("发送方接入（给机器人/脚本）", curl);
     var pre = document.createElement("pre");
     pre.className = "snippet-code";
@@ -304,6 +360,45 @@
     close.textContent = "已保存，关闭";
     close.addEventListener("click", function () {
       pendingSnippet = null;
+      renderDetail();
+    });
+    card.appendChild(close);
+
+    return card;
+  }
+
+  /**
+   * 新建 Send Key 的片段卡（D-30/UI-SPEC「创建 Send Key 成功后：同款卡片
+   * 仅含第 1 块」）：curl 示例含该 Key 完整值（201 是密钥唯一完整返回点），
+   * 关闭即弃。
+   */
+  function buildSendKeySnippetCard(s) {
+    var card = document.createElement("div");
+    card.className = "snippet-card";
+    card.setAttribute("data-testid", "snippet-card");
+
+    var title = document.createElement("h2");
+    title.className = "snippet-title";
+    title.textContent =
+      "已创建 Send Key「" +
+      (s.label ? s.label : "未命名") +
+      "」——请复制以下接入信息（关闭后列表中密钥以掩码显示）";
+    card.appendChild(title);
+
+    var curl = buildCurlText(s.key);
+    var b1 = snippetBlock("发送方接入（给机器人/脚本）", curl);
+    var pre = document.createElement("pre");
+    pre.className = "snippet-code";
+    pre.textContent = curl;
+    b1.appendChild(pre);
+    card.appendChild(b1);
+
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "text-btn snippet-close";
+    close.textContent = "已保存，关闭";
+    close.addEventListener("click", function () {
+      pendingSendKeySnippet = null;
       renderDetail();
     });
     card.appendChild(close);
@@ -393,6 +488,12 @@
     if (pendingSnippet !== null && pendingSnippet.channelId === ch.channelId) {
       channelDetail.appendChild(buildSnippetCard(pendingSnippet));
     }
+    if (
+      pendingSendKeySnippet !== null &&
+      pendingSendKeySnippet.channelId === ch.channelId
+    ) {
+      channelDetail.appendChild(buildSendKeySnippetCard(pendingSendKeySnippet));
+    }
 
     var ckBlock = document.createElement("section");
     ckBlock.className = "detail-block";
@@ -402,27 +503,205 @@
     ckBlock.appendChild(buildKeyRow(ch.channelKey));
     channelDetail.appendChild(ckBlock);
 
-    var skBlock = document.createElement("section");
-    skBlock.className = "detail-block";
-    var skHead = document.createElement("h2");
-    skHead.textContent = "Send Key";
-    skBlock.appendChild(skHead);
-    (ch.sendKeys || []).forEach(function (rec) {
+    channelDetail.appendChild(buildSendKeysBlock(ch));
+  }
+
+  /**
+   * Send Key 管理区（03-02，D-30/D-31/D-32 + UI-SPEC #6）：
+   * 创建表单（label 可选 ≤64）+ 上限态（达 10 disabled + 提示）+ 列表
+   * （六要素行：标签/未命名 graytext、掩码、日期 mono、眼睛、复制、吊销红字）
+   * + 空态文案。全部随频道数据重渲染——上限态/空态无需独立状态管理。
+   */
+  function buildSendKeysBlock(ch) {
+    var block = document.createElement("section");
+    block.className = "detail-block";
+    var head = document.createElement("h2");
+    head.textContent = "Send Keys";
+    block.appendChild(head);
+
+    var keys = ch.sendKeys || [];
+    var atLimit = keys.length >= SEND_KEY_LIMIT;
+
+    // 创建表单：label 空输入视为省略（POST 体不带 label 键）。
+    var form = document.createElement("form");
+    form.id = "sendkey-form";
+    var formRow = document.createElement("div");
+    formRow.className = "sendkey-form-row";
+    var input = document.createElement("input");
+    input.id = "sendkey-label-input";
+    input.name = "label";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("maxlength", "64");
+    input.placeholder = "如 deploy-bot（可选）";
+    var btn = document.createElement("button");
+    btn.type = "submit";
+    btn.id = "btn-create-sendkey";
+    btn.className = "primary-btn";
+    btn.textContent = "创建 Send Key";
+    if (atLimit) {
+      btn.disabled = true;
+    }
+    formRow.appendChild(input);
+    formRow.appendChild(btn);
+    form.appendChild(formRow);
+    if (atLimit) {
+      var hint = document.createElement("p");
+      hint.id = "sendkey-limit-hint";
+      hint.className = "limit-hint";
+      hint.textContent = "已达上限（10 个）";
+      form.appendChild(hint);
+    }
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      createSendKey(ch.channelId, input);
+    });
+    block.appendChild(form);
+
+    if (keys.length === 0) {
+      var empty = document.createElement("p");
+      empty.className = "sendkey-empty";
+      empty.textContent =
+        "该频道没有 Send Key——创建一个给脚本使用，不同脚本各用各的 Key，泄露不互伤。";
+      block.appendChild(empty);
+      return block;
+    }
+
+    keys.forEach(function (rec) {
       var row = document.createElement("div");
       row.className = "sendkey-row";
+      row.setAttribute("data-testid", "sendkey-row");
       var label = document.createElement("span");
       label.className = "sendkey-label";
-      label.textContent = rec.label ? rec.label : "未命名";
+      if (rec.label) {
+        label.textContent = rec.label;
+      } else {
+        label.textContent = "未命名";
+        label.classList.add("unnamed");
+      }
       row.appendChild(label);
-      row.appendChild(buildKeyRow(rec.key));
+      var value = document.createElement("span");
+      value.className = "key-value mono";
+      value.textContent = maskKey(rec.key);
+      row.appendChild(value);
       var date = document.createElement("span");
       date.className = "mono sendkey-date";
       date.textContent = formatDate(rec.createdAt);
       row.appendChild(date);
-      skBlock.appendChild(row);
+      row.appendChild(buildEyeButton(value, rec.key));
+      row.appendChild(buildCopyButton(rec.key));
+      var revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "revoke-btn";
+      revoke.textContent = "吊销";
+      revoke.addEventListener("click", function () {
+        openRevokeDialog(ch.channelId, rec);
+      });
+      row.appendChild(revoke);
+      block.appendChild(row);
     });
-    channelDetail.appendChild(skBlock);
+    return block;
   }
+
+  // ---- Send Key 创建/吊销交互（03-02） ----
+
+  function createSendKey(channelId, input) {
+    if (adminKey === null) return;
+    var btn = document.getElementById("btn-create-sendkey");
+    var labelValue = input.value.trim();
+    setBusy(btn, true, "创建 Send Key");
+    hideErrorBar();
+    fetch("/api/admin/channels/" + encodeURIComponent(channelId) + "/send-keys", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + adminKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(labelValue ? { label: labelValue } : {}),
+    })
+      .then(fetchJsonPair)
+      .then(function (r) {
+        setBusy(btn, false, "创建 Send Key");
+        if (r.resp.status === 201 && r.json && r.json.key) {
+          input.value = "";
+          pendingSendKeySnippet = {
+            channelId: channelId,
+            key: r.json.key,
+            label: r.json.label,
+          };
+          refreshChannels("刷新列表");
+        } else {
+          // 400 send_key_limit 等经错误条透传信封 message（竞态兜底——
+          // UI 上限态与 API 上限检查双保险，D-31）。
+          handleApiFailure(r.resp, r.json, "创建 Send Key");
+        }
+      })
+      .catch(function () {
+        setBusy(btn, false, "创建 Send Key");
+        networkError();
+      });
+  }
+
+  /** 吊销确认框（UI-SPEC Destructive 逐字契约；原生 dialog 焦点陷阱 + Esc）。 */
+  function openRevokeDialog(channelId, rec) {
+    pendingRevoke = { channelId: channelId, key: rec.key, label: rec.label };
+    revokeDialogTitle.textContent =
+      "吊销 Send Key「" + (rec.label ? rec.label : maskKey(rec.key)) + "」？";
+    revokeDialogBody.textContent =
+      "吊销后使用该密钥的脚本下次调用将收到 401（最长约 1 分钟边缘缓存窗口）。此操作不可撤销。";
+    revokeDialog.showModal();
+  }
+
+  btnRevokeCancel.addEventListener("click", function () {
+    pendingRevoke = null;
+    revokeDialog.close();
+  });
+  // Esc 关闭同样清引用（cancel 事件在 close() 与 Esc 两路径都触发）。
+  revokeDialog.addEventListener("cancel", function () {
+    pendingRevoke = null;
+  });
+
+  btnRevokeConfirm.addEventListener("click", function () {
+    if (pendingRevoke === null) {
+      revokeDialog.close();
+      return;
+    }
+    if (adminKey === null) {
+      pendingRevoke = null;
+      revokeDialog.close();
+      return;
+    }
+    var target = pendingRevoke;
+    pendingRevoke = null;
+    revokeDialog.close();
+    setBusy(btnRevokeConfirm, true, "确认吊销");
+    hideErrorBar();
+    fetch(
+      "/api/admin/channels/" +
+        encodeURIComponent(target.channelId) +
+        "/send-keys/" +
+        encodeURIComponent(target.key),
+      {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + adminKey },
+      },
+    )
+      .then(fetchJsonPair)
+      .then(function (r) {
+        setBusy(btnRevokeConfirm, false, "确认吊销");
+        if (r.resp.status === 204) {
+          // 行消失：整体重渲染（列表数据来自重拉的 id: 记录）。
+          refreshChannels("刷新列表");
+        } else {
+          handleApiFailure(r.resp, r.json, "吊销 Send Key");
+        }
+      })
+      .catch(function () {
+        setBusy(btnRevokeConfirm, false, "确认吊销");
+        networkError();
+      });
+  });
 
   function setChannels(list) {
     channels = Array.isArray(list) ? list : [];
@@ -551,6 +830,11 @@
     channels = [];
     selectedId = null;
     pendingSnippet = null;
+    pendingSendKeySnippet = null;
+    pendingRevoke = null;
+    if (revokeDialog.open) {
+      revokeDialog.close();
+    }
     hideErrorBar();
     enterLoginScreen();
   });
