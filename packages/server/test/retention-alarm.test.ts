@@ -116,12 +116,17 @@ describe("retention alarm (D-08)", () => {
     expect(initial.messages[49]!.seq).toBe(600);
 
     // 3. 种入一个过期限流桶（>24h）供清扫断言；并确认活跃桶存在。
+    //    04-02 调度器语义适配：alarm 重构为多事件单槽后，保留清理只在
+    //    retention_due 到期时执行（publish 播种 now+24h）——本测试模拟
+    //    「24 小时已过去」：删除 retention_due meta 行（缺省语义 = 已到期，
+    //    alarm 内立即补跑一次清理——与旧语义的显式触发等价）。
     await runInDurableObject(stub, (_obj: unknown, state: DurableObjectState) => {
       state.storage.sql.exec(
         "INSERT OR REPLACE INTO rate_sends (send_key, window_start, count) VALUES (?1, ?2, 5)",
         "tsk-expired-probe",
         Date.now() - DAY_MS - 3_600_000,
       );
+      state.storage.sql.exec("DELETE FROM meta WHERE k = 'retention_due'");
     });
 
     // 4. 触发 alarm（首个 alarm 已由第 1 条 publish 判空设置）。

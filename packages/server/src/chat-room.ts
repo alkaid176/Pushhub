@@ -71,6 +71,19 @@ const CHANNEL_ID_HEADER = "X-PH-Channel-Id";
 // 一天一次批量足够（Pitfall 5：清理过频额度翻倍消耗）。
 const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+// ---- 回调投递常量（04-02，Task 2 用户裁决 approve-contract 定稿，one-way）----
+// 重试档位（D-50）：attempts 递增后取档 [attempts-1]——第 1 次失败等 1s、
+// 第 2 次等 2m、第 3 次等 10m、第 4 次等 30m、第 5 次失败即封顶（无档可取）。
+const CALLBACK_RETRY_DELAYS_MS = [1_000, 120_000, 600_000, 1_800_000];
+/** 总尝试次数硬封顶（T-04-10：每消息回调外呼上界 5 次 fetch + 5 次 alarm 唤醒）。 */
+const CALLBACK_MAX_ATTEMPTS = 5;
+/**
+ * 签名容忍窗（D-48，approve-contract 定稿 300000ms、毫秒口径）：接收方拒收
+ * 超窗请求的参考常量（供文档与 04-04 验签参考实现同口径引用）。DO 投递侧
+ * 自身不校验容忍窗——那是接收方职责（重试每次新 timestamp 天然落在窗内）。
+ */
+export const SIGNATURE_TOLERANCE_MS = 300_000;
+
 // ---- messages 表：Phase 1 冻结版 13 列 DDL（Pattern 4，不建二级索引）----
 // seq 频道内单调游标（显式赋值）；wid 对外 ID（m_ + 16 字符，D-05）；
 // answered 字段集 Phase 1 一次定全（D-03），本期恒为初始值。
@@ -114,6 +127,26 @@ const CREATE_META_DDL = `
   )
 `;
 
+// ---- callbacks 表（04-02，D-43/D-49/D-50）：回调投递队列 + 失败记录 ----
+// wid 主键 = 一消息恰一回调行（D-43 恰首答触发一次）；body 为入队时预序列化
+// 的 D-49 五字段 JSON——重试字节冻结（Pitfall 4：投递永远发送该字符串，键序
+// 漂移会使接收方验签失败）。next_attempt_at 为调度键（alarm 单槽 min 重排）；
+// status: pending | delivered | failed。deleteAll 随频道删除一并清除（频道已删
+// 无需回调）；purge 重建空表（WR-01 同款）。
+const CREATE_CALLBACKS_DDL = `
+  CREATE TABLE IF NOT EXISTS callbacks (
+    wid              TEXT PRIMARY KEY,
+    url              TEXT NOT NULL,
+    body             TEXT NOT NULL,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at  INTEGER NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    last_error       TEXT,
+    created_at       INTEGER NOT NULL,
+    final_failed_at  INTEGER
+  )
+`;
+
 /** meta 表的密钥代际行键：值为最近一次重置后的当前 Channel Key。 */
 const META_KEY_GEN = "channel_key_gen";
 
@@ -121,6 +154,11 @@ const META_KEY_GEN = "channel_key_gen";
  * （D-49 回调 body 的 channel_id 数据源）——/ws 升级时随内部头落盘。 */
 const META_KEY_SIGNING_SECRET = "signing_secret";
 const META_KEY_CHANNEL_ID = "channel_id";
+
+/** meta 表行键（04-02）：下次保留清理到期时刻（epoch ms）——alarm 多事件单槽
+ * 调度器的第二类事件日程（Pitfall 1 根治：到期时间持久化，不被重试 alarm
+ * 顺延或吞噬）。缺省语义 = 视为已到期（null → 立即补跑一次清理）。 */
+const META_KEY_RETENTION_DUE = "retention_due";
 
 // ---- wid 生成（D-05）：前缀 + 长度引用 shared 常量（阈值单一来源），
 // URL-safe 字母表去易混淆字符，不引外部 ID 库。----
@@ -259,6 +297,7 @@ export class ChatRoom extends DurableObject {
     ctx.storage.sql.exec(CREATE_MESSAGES_DDL);
     ctx.storage.sql.exec(CREATE_RATE_SENDS_DDL);
     ctx.storage.sql.exec(CREATE_META_DDL);
+    ctx.storage.sql.exec(CREATE_CALLBACKS_DDL);
     // auto-response 必须在构造器重设——休眠唤醒后不复活（Pitfall 3）。
     // 协议层 ping/pong 由运行时自动应答且不唤醒 DO（零计费零时长）。
     // WebSocketRequestResponsePair 是 workerd 运行时全局构造器（同 WebSocketPair），
@@ -440,6 +479,7 @@ export class ChatRoom extends DurableObject {
     this.ctx.storage.sql.exec(CREATE_MESSAGES_DDL);
     this.ctx.storage.sql.exec(CREATE_RATE_SENDS_DDL);
     this.ctx.storage.sql.exec(CREATE_META_DDL);
+    this.ctx.storage.sql.exec(CREATE_CALLBACKS_DDL);
     return new Response(JSON.stringify({ kicked }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
@@ -588,8 +628,13 @@ export class ChatRoom extends DurableObject {
 
     // D-08 首个 alarm 的设置点：publish 成功路径内 getAlarm() 判空后才 set
     // （构造器绝不 setAlarm——DO 每次唤醒构造器先于 alarm 处理器执行，直接
-    // set 会覆盖未触发的 alarm，Pitfall 7）。后续节奏由 alarm 处理器尾部
-    // 无条件重设自愈维持。
+    // set 会覆盖未触发的 alarm，Pitfall 7）。后续节奏由调度器单点
+    // scheduleNextAlarm 维持（04-02 重构：本判空播种是 publish 专属，全文件
+    // 其余 setAlarm 一律收敛到 scheduleNextAlarm——散落 setAlarm 互相覆盖
+    // 吞噬事件，Pitfall 1）。
+    if (this.readRetentionDue() === null) {
+      this.writeRetentionDue(Date.now() + RETENTION_INTERVAL_MS);
+    }
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.setAlarm(Date.now() + RETENTION_INTERVAL_MS);
     }
@@ -716,7 +761,7 @@ export class ChatRoom extends DurableObject {
       return;
     }
     if (frame.type === "reply") {
-      this.handleReply(ws, frame);
+      await this.handleReply(ws, frame);
       return;
     }
     this.sendHistory(ws, frame.since, frame.limit);
@@ -734,9 +779,11 @@ export class ChatRoom extends DurableObject {
   }
 
   /**
-   * reply 帧处理（04-01，D-42/D-44/D-45/D-46/D-51~D-53）——全程同步零
-   * await（Pitfall 5：竞态正确性唯一依赖 SELECT→UPDATE 的同步性，DO 单
-   * 线程先到先得；ack/扇出/attachment 全部排在 UPDATE 之后）：
+   * reply 帧处理（04-01，D-42/D-44/D-45/D-46/D-51~D-53 + 04-02 回调尾部）——
+   * 竞态关键区（SELECT→校验→UPDATE + ack/answered 发送）全程同步零 await
+   * （Pitfall 5：先到者落库对后到者 SELECT 可见，DO 单线程先到先得的唯一
+   * 保证）；UPDATE 与帧发送之后的 await 段（回调投递 + alarm 重排）不再影
+   * 响竞态正确性：
    *  1. SELECT 目标行（seq/options/answered/callback_url）——无行回
    *     not_found、已置位回 already_replied（D-42 两域级拒绝严格区分，
    *     均不断连）；
@@ -747,10 +794,13 @@ export class ChatRoom extends DurableObject {
    *  4. ack 单发回复者本人（恰 v/type/wid）；
    *  5. answered 帧全连接扇出（handlePublish 同款遍历 + 死连接收集后
    *     close(1011)）——独立帧而非 message 重发是 SeqDedup 硬约束（D-17）；
-   *  6. attachment 演进：by 存在时落 displayName（D-52 跨休眠存活）。
-   * callback_url 本任务读而不动作（04-02 在此挂回调入队——架构挂载点已在）。
+   *  6. attachment 演进：by 存在时落 displayName（D-52 跨休眠存活）；
+   *  7.（04-02）callback_url 非空 → callbacks 入队（body 预序列化恰一次，
+   *     D-43 恰首答触发——被拒回复早在 1~3 就 return，永不抵达此处）→
+   *     立即 dispatchDueCallbacks（Q5 单路径：即时首投与到期重试同一函数）
+   *     → scheduleNextAlarm 单点重排。
    */
-  private handleReply(ws: WebSocket, frame: ReplyFrame): void {
+  private async handleReply(ws: WebSocket, frame: ReplyFrame): Promise<void> {
     const rows = this.ctx.storage.sql
       .exec(
         "SELECT seq, options, answered, callback_url FROM messages WHERE wid = ?1",
@@ -830,8 +880,33 @@ export class ChatRoom extends DurableObject {
     for (const target of dead) {
       target.close(1011, "send failed");
     }
-    // callback_url 非空时暂不动作（04-02 挂回调入队处——row.callback_url
-    // 已读就位，功能性缺口可后补）。
+
+    // ---- 04-02 回调尾部（D-43/D-49/D-50 + Q5 单路径）----
+    // 恰首答触发一次：被拒回复（not_found/already_replied/白名单外）早在
+    // 上方 return，永不入队。body 预序列化恰一次存 callbacks.body——重试
+    // 永远发送该字符串（Pitfall 4：重序列化的键序漂移会使接收方验签失败）。
+    if (row.callback_url !== null) {
+      const callbackBody = JSON.stringify({
+        message_id: frame.wid,
+        reply: answeredContent,
+        replied_by: answeredBy,
+        replied_at: answeredAt,
+        channel_id: this.readMeta(META_KEY_CHANNEL_ID),
+      });
+      const now = Date.now();
+      this.ctx.storage.sql.exec(
+        "INSERT OR REPLACE INTO callbacks (wid, url, body, attempts, next_attempt_at, status, created_at) " +
+          "VALUES (?1, ?2, ?3, 0, ?4, 'pending', ?5)",
+        frame.wid,
+        row.callback_url,
+        callbackBody,
+        now,
+        now,
+      );
+      // 即时首投与到期重试同一条投递函数（竞态面最小）；随后单点重排 alarm。
+      await this.dispatchDueCallbacks();
+      await this.scheduleNextAlarm();
+    }
   }
 
   /**
@@ -888,31 +963,215 @@ export class ChatRoom extends DurableObject {
     ws.close(code, reason);
   }
 
+  // ---- 04-02 回调投递与 alarm 多事件单槽调度器 ----
+
+  /** meta 单行读（miss / 值损坏返回 null——调用方各自兜底）。同步 SQL。 */
+  private readMeta(key: string): string | null {
+    const rows = this.ctx.storage.sql
+      .exec("SELECT v FROM meta WHERE k = ?1", key)
+      .toArray() as unknown as { v: string }[];
+    return rows.length > 0 ? rows[0].v : null;
+  }
+
+  /** retention_due 读（缺省/损坏视为已到期——立即补跑一次清理，自愈节奏）。 */
+  private readRetentionDue(): number | null {
+    const raw = this.readMeta(META_KEY_RETENTION_DUE);
+    if (raw === null) {
+      return null;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** retention_due 写（INSERT ON CONFLICT 覆盖式，kick-all 代际落盘同款）。 */
+  private writeRetentionDue(due: number): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2",
+      META_KEY_RETENTION_DUE,
+      String(due),
+    );
+  }
+
   /**
-   * D-08 每日保留清理（alarm，Pitfall 5/7）：
-   *  - messages：DELETE WHERE seq <= MAX(seq) - RETENTION_KEEP——严格小于当前
-   *    max，永不删 max 行（显式 seq 赋值的单调不回退前提；表空时 MAX 为
-   *    NULL，条件恒假零删除）；
-   *  - rate_sends：清扫过期限流桶（window_start 早于 24 小时前）；
-   *  - catch 自捕获不重抛：alarm 自带重试仅 6 次即放弃——自 catch 才能保住
-   *    每日节奏（异常留给下一次 alarm 自然重试同一批数据）；
-   *  - finally 尾部无条件重设下一天（setAlarm 覆盖式，不叠加）——本方法
-   *    是唯一与 publish 判空并列的 setAlarm 调用点。
+   * 回调签名（D-48，approve-contract 定稿）：HMAC-SHA256(secret,
+   * timestamp + "." + rawBody) 的 hex。点分隔消除「timestamp 数字与 body 首
+   * 字符」的拼接歧义（Stripe 同款）；timestamp 为毫秒数字符串（协议全域
+   * 同口径）。每次投递新生成 timestamp + 新签名（重试天然落在接收方容忍窗
+   * 内，重放的旧 ts 在窗外被拒——T-04-06）。
+   */
+  private async signCallback(
+    secret: string,
+    timestamp: string,
+    body: string,
+  ): Promise<string> {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      enc.encode(`${timestamp}.${body}`),
+    );
+    return [...new Uint8Array(mac)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  /**
+   * 到期回调分发（RPL-03/RPL-04 核心，Pattern 3）：SELECT status=pending 且
+   * next_attempt_at 已到期的行，逐条 await 处理（量级极小，A3）：
+   *  - attempts 先行递增并按新 attempts 预写 next_attempt_at 档位——fetch
+   *    中途崩溃按已消耗计（at-least-once，接收方按 message_id 幂等兜底）；
+   *  - meta 无 signing_secret（旧频道未补发，Pitfall 8）→ 直接 status=failed
+   *    + last_error="no signing secret"——可见可循补发，不静默消失、零外呼；
+   *  - 新 timestamp + 新签名 + 行内预序列化 body 发送；resp.ok 即 delivered；
+   *    非 2xx 记 last_error 为 HTTP 状态码摘要且响应体 cancel() 释放连接
+   *    （不读响应体）；网络异常 catch 记 String(e).slice(0,200)；
+   *  - attempts >= CALLBACK_MAX_ATTEMPTS 时置 failed + final_failed_at。
+   */
+  private async dispatchDueCallbacks(): Promise<void> {
+    const now = Date.now();
+    const due = this.ctx.storage.sql
+      .exec(
+        "SELECT wid, url, body, attempts FROM callbacks WHERE status = 'pending' AND next_attempt_at <= ?1",
+        now,
+      )
+      .toArray() as unknown as {
+      wid: string;
+      url: string;
+      body: string;
+      attempts: number;
+    }[];
+    for (const row of due) {
+      // attempts 先行递增 + 预写档位（第 5 次尝试无档可取——封顶后由
+      // failAttempt 置 failed，next_attempt_at 写 MAX 使其永不再到期）。
+      const attempts = row.attempts + 1;
+      const delay = CALLBACK_RETRY_DELAYS_MS[attempts - 1];
+      this.ctx.storage.sql.exec(
+        "UPDATE callbacks SET attempts = ?2, next_attempt_at = ?3 WHERE wid = ?1",
+        row.wid,
+        attempts,
+        delay !== undefined ? now + delay : Number.MAX_SAFE_INTEGER,
+      );
+
+      const secret = this.readMeta(META_KEY_SIGNING_SECRET);
+      if (secret === null) {
+        this.ctx.storage.sql.exec(
+          "UPDATE callbacks SET status = 'failed', final_failed_at = ?2, last_error = ?3 WHERE wid = ?1",
+          row.wid,
+          Date.now(),
+          "no signing secret",
+        );
+        continue;
+      }
+
+      try {
+        const ts = String(Date.now());
+        const signature = await this.signCallback(secret, ts, row.body);
+        const resp = await fetch(row.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "PushHub-Message-Id": row.wid,
+            "PushHub-Timestamp": ts,
+            "PushHub-Signature": signature,
+          },
+          body: row.body,
+        });
+        if (resp.ok) {
+          this.ctx.storage.sql.exec(
+            "UPDATE callbacks SET status = 'delivered' WHERE wid = ?1",
+            row.wid,
+          );
+          continue;
+        }
+        this.recordCallbackFailure(row.wid, attempts, `HTTP ${resp.status}`);
+        // 不读响应体——cancel 释放连接（官方最佳实践，T-04-08）。
+        if (resp.body !== null) {
+          await resp.body.cancel();
+        }
+      } catch (e) {
+        this.recordCallbackFailure(row.wid, attempts, String(e).slice(0, 200));
+      }
+    }
+  }
+
+  /** 单次失败落账：记 last_error；attempts 达封顶置 failed + final_failed_at。 */
+  private recordCallbackFailure(
+    wid: string,
+    attempts: number,
+    errorSummary: string,
+  ): void {
+    if (attempts >= CALLBACK_MAX_ATTEMPTS) {
+      this.ctx.storage.sql.exec(
+        "UPDATE callbacks SET status = 'failed', final_failed_at = ?2, last_error = ?3 WHERE wid = ?1",
+        wid,
+        Date.now(),
+        errorSummary,
+      );
+    } else {
+      this.ctx.storage.sql.exec(
+        "UPDATE callbacks SET last_error = ?2 WHERE wid = ?1",
+        wid,
+        errorSummary,
+      );
+    }
+  }
+
+  /**
+   * alarm 单点重排（Pitfall 1 根治，Pattern 2 官方多事件单槽模式）：
+   * setAlarm(min(最早到期重试, retention_due))——无 pending 重试时取
+   * retention_due（恒存在语义，见下）；retention_due 缺省视为已到期
+   * （now → 立即补跑清理）。max(next, now+1) 防 setAlarm 过去时刻报错。
+   * 本方法与 publish 判空播种点是全文件仅有的 setAlarm 调用点。
+   */
+  private async scheduleNextAlarm(): Promise<void> {
+    const nextRetryRow = this.ctx.storage.sql
+      .exec(
+        "SELECT MIN(next_attempt_at) AS m FROM callbacks WHERE status = 'pending'",
+      )
+      .one() as { m: number | null };
+    const next = Math.min(
+      nextRetryRow.m ?? Number.MAX_SAFE_INTEGER,
+      this.readRetentionDue() ?? Date.now(),
+    );
+    await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 1));
+  }
+
+  /**
+   * alarm 双职责调度器（04-02 重构，原 D-08 单职责语义零漂移地搬入到期分支）：
+   *  1. dispatchDueCallbacks()——到期回调重试（D-50）；
+   *  2. retention_due 到期（缺省视为到期，立即补跑）→ D-08 原清理 SQL +
+   *     retention_due = now + RETENTION_INTERVAL_MS 推进；
+   *  - catch 吞异常保节奏（alarm 自带重试仅 6 次即放弃——自 catch 才能保住
+   *    每日节奏；回调行 attempts 语义自带幂等，异常留给下一次 alarm 重试）；
+   *  - finally 单点重排 scheduleNextAlarm()（取代旧的尾部无条件 +24h——
+   *    单职责时代的正确模式在双职责下会吞噬分钟级重试档位，Pitfall 1）。
    */
   async alarm(): Promise<void> {
     try {
-      this.ctx.storage.sql.exec(
-        "DELETE FROM messages WHERE seq <= (SELECT MAX(seq) - ?1 FROM messages)",
-        RETENTION_KEEP,
-      );
-      this.ctx.storage.sql.exec(
-        "DELETE FROM rate_sends WHERE window_start < ?1",
-        Date.now() - RETENTION_INTERVAL_MS,
-      );
+      await this.dispatchDueCallbacks();
+      const now = Date.now();
+      if (now >= (this.readRetentionDue() ?? 0)) {
+        this.ctx.storage.sql.exec(
+          "DELETE FROM messages WHERE seq <= (SELECT MAX(seq) - ?1 FROM messages)",
+          RETENTION_KEEP,
+        );
+        this.ctx.storage.sql.exec(
+          "DELETE FROM rate_sends WHERE window_start < ?1",
+          now - RETENTION_INTERVAL_MS,
+        );
+        this.writeRetentionDue(now + RETENTION_INTERVAL_MS);
+      }
     } catch {
-      // 吞异常：清理失败不阻断重设节奏；数据幂等（下一天同条件重删）。
+      // 吞异常：清理/分发失败不阻断重排节奏；数据幂等（下次同条件重做）。
     } finally {
-      await this.ctx.storage.setAlarm(Date.now() + RETENTION_INTERVAL_MS);
+      await this.scheduleNextAlarm();
     }
   }
 }

@@ -320,11 +320,14 @@ async function seedMetaSecret(stub: DurableObjectStub): Promise<string> {
   return secret;
 }
 
-/** 确保已有已调度 alarm（种行测试不经 reply 入队路径，需显式播种）。 */
+/** 确保已有已调度 alarm（种行测试不经 reply 入队路径，需显式播种）。设未来
+ * 时刻——过去/当下时刻会被 workerd 自动触发消费掉，runDurableObjectAlarm
+ * 便无 alarm 可跑（返回 false）。 */
 async function ensureAlarm(stub: DurableObjectStub): Promise<void> {
   await runInDurableObject(
     stub,
-    (_obj: unknown, state: DurableObjectState) => state.storage.setAlarm(Date.now()),
+    (_obj: unknown, state: DurableObjectState) =>
+      state.storage.setAlarm(Date.now() + 60_000),
   );
 }
 
@@ -380,6 +383,9 @@ describe("回调投递（04-02 Task 3）", () => {
     const socket = await connectAndConsumeHistory(channel.channelKey);
 
     const callbackUrl = `http://callback.test${CALLBACK_PATH_MARK}?v=first`;
+    // attach-before-trigger：message 帧监听必须在触发发送之前预挂（扇出在
+    // publish 的 HTTP 往返期间即到达——无监听即弃，01-04 实证铁律）。
+    const messagePromise = nextFrame<{ type: string; wid: string; options?: string[] }>(socket);
     const sendResp = await sendRequest(channel.sendKeys[0].key, {
       text: "deploy finished",
       options: ["确认", "忽略"],
@@ -388,7 +394,7 @@ describe("回调投递（04-02 Task 3）", () => {
     expect(sendResp.status).toBe(200);
     const { id: wid } = (await sendResp.json()) as { id: string };
 
-    const messageFrame = await nextFrame<{ type: string; wid: string; options?: string[] }>(socket);
+    const messageFrame = await messagePromise;
     expect(messageFrame.type).toBe("message");
     expect(messageFrame.wid).toBe(wid);
 
@@ -527,6 +533,7 @@ describe("回调投递（04-02 Task 3）", () => {
     socket.accept();
     await nextFrame(socket); // history 首拉
 
+    const messagePromise = nextFrame<{ type: string; wid: string }>(socket);
     const pubResp = await stub.fetch("https://do.pushhub.internal/publish", {
       method: "POST",
       headers: {
@@ -542,7 +549,7 @@ describe("回调投递（04-02 Task 3）", () => {
     expect(pubResp.status).toBe(200);
     const { id: wid } = (await pubResp.json()) as { id: string };
 
-    const messageFrame = await nextFrame<{ type: string; wid: string }>(socket);
+    const messageFrame = await messagePromise;
     expect(messageFrame.wid).toBe(wid);
     socket.send(JSON.stringify({ v: 1, type: "reply", wid, text: "人类回复" }));
     const [ack, answered] = await nextFrames<{ type: string }>(socket, 2);
@@ -647,6 +654,10 @@ describe("回调投递（04-02 Task 3）", () => {
     const socketA = await connectAndConsumeHistory(channel.channelKey);
     const socketB = await connectAndConsumeHistory(channel.channelKey);
 
+    // A 先答（A 收 ack+answered；B 收 answered）。attach-before-trigger：两端的
+    // message 帧监听在触发发送之前预挂（扇出在 HTTP 往返期间即到达）。
+    const messagePromiseA = nextFrame<{ type: string; wid: string }>(socketA);
+    const messagePromiseB = nextFrame<{ type: string; wid: string }>(socketB);
     const sendResp = await sendRequest(channel.sendKeys[0].key, {
       text: "only first reply counts",
       options: ["OK"],
@@ -655,14 +666,18 @@ describe("回调投递（04-02 Task 3）", () => {
     expect(sendResp.status).toBe(200);
     const { id: wid } = (await sendResp.json()) as { id: string };
 
-    // A 先答（A 收 ack+answered；B 收 answered）。
-    await nextFrame<{ type: string; wid: string }>(socketA); // message
-    await nextFrame<{ type: string; wid: string }>(socketB); // message
+    const messageA = await messagePromiseA;
+    expect(messageA.wid).toBe(wid);
+    const messageB = await messagePromiseB;
+    expect(messageB.wid).toBe(wid);
+    // A 先答（A 收 ack+answered；B 收 answered——与 A 帧同批扇出，B 侧监听
+    // 同样必须在触发前预挂）。
+    const answeredPromiseB = nextFrame<{ type: string }>(socketB);
     socketA.send(JSON.stringify({ v: 1, type: "reply", wid, selected_option: "OK", by: "a" }));
     const [ack, answered] = await nextFrames<{ type: string }>(socketA, 2);
     expect(ack.type).toBe("ack");
     expect(answered.type).toBe("answered");
-    await nextFrame<{ type: string }>(socketB); // answered 扇出
+    expect((await answeredPromiseB).type).toBe("answered");
 
     // B 二次答 → already_replied 错误帧（不断连）。
     socketB.send(JSON.stringify({ v: 1, type: "reply", wid, selected_option: "OK", by: "b" }));
