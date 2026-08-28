@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BY_MAX,
   LIMITS,
   PROTOCOL_VERSION,
   SYNC_LIMIT_MAX,
@@ -272,6 +273,133 @@ describe("validateInboundFrame — 入站帧版本与结构（D-07 / D-11）", (
       `{"v":1,"type":"sync","since":5,"limit":"200"}`,
     ];
     for (const raw of cases) {
+      const r = validateInboundFrame(raw);
+      expect(r.ok, `expected rejection for: ${raw}`).toBe(false);
+      if (!r.ok) {
+        expect(r.code).toBe("invalid_frame");
+      }
+    }
+  });
+});
+
+describe("validateInboundFrame — reply 分支（D-45/D-46/D-53，04-01）", () => {
+  it("恰一通过：selected_option 或 text 单独提供均合法（by 可选），返回规范化帧", () => {
+    const r1 = validateInboundFrame(
+      `{"v":1,"type":"reply","wid":"m_2E9fKm3PqR7vXyZa","selected_option":"OK"}`,
+    );
+    expect(r1.ok).toBe(true);
+    if (r1.ok) {
+      expect(r1.frame).toEqual({
+        v: PROTOCOL_VERSION,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        selected_option: "OK",
+      });
+    }
+    const r2 = validateInboundFrame(
+      `{"v":1,"type":"reply","wid":"m_2E9fKm3PqR7vXyZa","text":"hi","by":"dev"}`,
+    );
+    expect(r2.ok).toBe(true);
+    if (r2.ok) {
+      expect(r2.frame).toEqual({
+        v: PROTOCOL_VERSION,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        text: "hi",
+        by: "dev",
+      });
+    }
+  });
+
+  it("同真拒绝：selected_option 与 text 同时提供 → invalid_frame", () => {
+    const r = validateInboundFrame(
+      `{"v":1,"type":"reply","wid":"m_2E9fKm3PqR7vXyZa","selected_option":"OK","text":"both"}`,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe("invalid_frame");
+    }
+  });
+
+  it("同假拒绝：两者都不提供 → invalid_frame", () => {
+    const r = validateInboundFrame(`{"v":1,"type":"reply","wid":"m_2E9fKm3PqR7vXyZa"}`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe("invalid_frame");
+    }
+  });
+
+  it("可选字段 null 视为未提供（省略语义与 SRV-02 同源）：text 侧单真即合法", () => {
+    const r = validateInboundFrame(
+      `{"v":1,"type":"reply","wid":"m_2E9fKm3PqR7vXyZa","selected_option":null,"text":"only text"}`,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.frame).toEqual({
+        v: PROTOCOL_VERSION,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        text: "only text",
+      });
+    }
+  });
+
+  it("text 恰 LIMITS.TEXT_MAX 通过，超一字符拒绝", () => {
+    const ok = validateInboundFrame(
+      JSON.stringify({
+        v: 1,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        text: repeat("a", LIMITS.TEXT_MAX),
+      }),
+    );
+    expect(ok.ok).toBe(true);
+    const bad = validateInboundFrame(
+      JSON.stringify({
+        v: 1,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        text: repeat("a", LIMITS.TEXT_MAX + 1),
+      }),
+    );
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.code).toBe("invalid_frame");
+    }
+  });
+
+  it("by 恰 BY_MAX 通过，BY_MAX+1 拒绝（UTF-16 码元口径，D-53）", () => {
+    const ok = validateInboundFrame(
+      JSON.stringify({
+        v: 1,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        text: "hi",
+        by: repeat("b", BY_MAX),
+      }),
+    );
+    expect(ok.ok).toBe(true);
+    const bad = validateInboundFrame(
+      JSON.stringify({
+        v: 1,
+        type: "reply",
+        wid: "m_2E9fKm3PqR7vXyZa",
+        text: "hi",
+        by: repeat("b", BY_MAX + 1),
+      }),
+    );
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.code).toBe("invalid_frame");
+    }
+  });
+
+  it("wid 缺失 / 非字符串 / 空串 → invalid_frame", () => {
+    for (const raw of [
+      `{"v":1,"type":"reply","text":"no wid"}`,
+      `{"v":1,"type":"reply","wid":123,"text":"numeric wid"}`,
+      `{"v":1,"type":"reply","wid":"","text":"empty wid"}`,
+    ]) {
       const r = validateInboundFrame(raw);
       expect(r.ok, `expected rejection for: ${raw}`).toBe(false);
       if (!r.ok) {
