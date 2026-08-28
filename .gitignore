@@ -19,3 +19,9 @@ packages/server/public/pushhub.js
 
 # Playwright E2E 运行产物
 packages/web-sdk/test-results/
+
+# GSD 规划目录与本地配置（不进远端仓库）
+.claude/
+.planning/
+.gsd/
+
