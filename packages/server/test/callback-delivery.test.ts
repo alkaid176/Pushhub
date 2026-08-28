@@ -345,6 +345,22 @@ async function fastForwardDue(stub: DurableObjectStub, wid: string): Promise<voi
   );
 }
 
+/** 测试清场（Pitfall 10）：把行推远到 24h 外并重排 alarm——workerd 的自动
+ * alarm 触发不会再分发该行，后续测试的 recorder 数组不被本频道的迟到
+ * 重试污染（isolate 级 fetch wrapper 跨 DO 实例共享，见文件头注释）。 */
+async function fastForwardFar(stub: DurableObjectStub, wid: string): Promise<void> {
+  await runInDurableObject(
+    stub,
+    (_obj: unknown, state: DurableObjectState) => {
+      state.storage.sql.exec(
+        "UPDATE callbacks SET next_attempt_at = ?2 WHERE wid = ?1",
+        wid,
+        Date.now() + 24 * 60 * 60 * 1000,
+      );
+    },
+  );
+}
+
 async function readCallbackRows(stub: DurableObjectStub): Promise<CallbackRow[]> {
   return runInDurableObject(
     stub,
@@ -516,6 +532,12 @@ describe("回调投递（04-02 Task 3）", () => {
     expect(cap.last_error).toContain("500");
 
     await waitForCalls(stub, 5); // 4 档位行 + 1 封顶行 = 恰 5 次 POST
+
+    // 清场（isolate 级 recorder 串扰防御，Pitfall 10）：m_tier_0 的重试在
+    // +1s——workerd 会在后续测试运行中自动触发该 alarm 并 POST（fetch 走
+    // 共享 globalThis wrapper，账记进后续测试刚清零的数组）。推远到期使
+    // 自动 alarm 永不再分发本频道的行。
+    await fastForwardFar(stub, "m_tier_0");
   });
 
   it("meta 无 signing_secret：回调行直接 failed、last_error 为 no signing secret、零 POST（Pitfall 8）", { timeout: 20_000 }, async () => {
@@ -644,6 +666,11 @@ describe("回调投递（04-02 Task 3）", () => {
     expect(alarm).not.toBeNull();
     expect(alarm!).toBeGreaterThan(Date.now());
     expect(alarm!).toBeLessThan(Date.now() + 60_000);
+
+    // 清场（Pitfall 10）：m_coexist 重试在 +1s——同 tier 测试清场注释。
+    await fastForwardFar(stub, "m_coexist");
+    // 重排使 getAlarm 回到 retention 量级（清场行已远，min 不再被它压低）。
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
   });
 
   it("D-43 恰首答一次：二次 reply 被拒 → callbacks 表恰一行、接收器恰一次 POST", { timeout: 20_000 }, async () => {
