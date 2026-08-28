@@ -408,3 +408,48 @@ describe("validateInboundFrame — reply 分支（D-45/D-46/D-53，04-01）", ()
     }
   });
 });
+
+describe("validateSendBody — callback_url scheme 白名单（04-02，Pitfall 6）", () => {
+  it("http:// 与 https:// 通过；null/缺省归一省略；空串保持透传（白名单仅约束非空值）", () => {
+    expectNormalized(
+      validateSendBody({ text: "ok", callback_url: "http://cb.example/hook" }),
+      { text: "ok", priority: "normal", callback_url: "http://cb.example/hook" },
+    );
+    expectNormalized(
+      validateSendBody({ text: "ok", callback_url: "https://cb.example/hook" }),
+      { text: "ok", priority: "normal", callback_url: "https://cb.example/hook" },
+    );
+    expectNormalized(validateSendBody({ text: "ok", callback_url: null }), {
+      text: "ok",
+      priority: "normal",
+    });
+    expectNormalized(validateSendBody({ text: "ok" }), {
+      text: "ok",
+      priority: "normal",
+    });
+    // 空串：非空才适用白名单——保持既有透传行为（与缺省/null 的省略语义
+    // 分开），不扩拒绝面。
+    expectNormalized(validateSendBody({ text: "ok", callback_url: "" }), {
+      text: "ok",
+      priority: "normal",
+      callback_url: "",
+    });
+  });
+
+  it("file/ftp/javascript/大写 HTTP 前缀拒 400 invalid_body（严格小写匹配口径）", () => {
+    for (const url of [
+      "file:///etc/passwd",
+      "ftp://x/hook",
+      "javascript:alert(1)",
+      "HTTP://cb.example/hook",
+      "http:/slash-missing",
+      "//protocol-relative",
+    ]) {
+      expectRejected(
+        validateSendBody({ text: "ok", callback_url: url }),
+        400,
+        "invalid_body",
+      );
+    }
+  });
+});

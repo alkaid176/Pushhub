@@ -698,3 +698,74 @@ describe("回调投递（04-02 Task 3）", () => {
     socketB.close(1000, "done");
   });
 });
+
+describe("GET /api/callback-failures 路由鉴权（04-02 Task 4，Q3 落点：Bearer Channel Key 域）", () => {
+  function failuresRequest(bearer: string | null): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (bearer !== null) headers.Authorization = `Bearer ${bearer}`;
+    return exports.default.fetch(
+      new Request("https://example.com/api/callback-failures", { headers }),
+      env,
+    );
+  }
+
+  async function expectInvalidKey(resp: Response): Promise<void> {
+    expect(resp.status).toBe(401);
+    const body = (await resp.json()) as { error: { code: string } };
+    expect(Object.keys(body).sort()).toEqual(["error"]);
+    expect(body.error.code).toBe("invalid_key");
+  }
+
+  it("无 Authorization → 401；无效 Bearer → 401；Send Key 跨域 → 401（ch: 预检不认 sk:）", async () => {
+    const channel = await createChannelViaApi(`cf-auth-${uniqueSuffix()}`);
+
+    await expectInvalidKey(await failuresRequest(null));
+    await expectInvalidKey(await failuresRequest("phc_definitely-not-a-key-0000000000000"));
+    // Send Key 不得跨域（Q3：失败记录是频道域诊断数据，鉴权域为 Channel Key）。
+    await expectInvalidKey(await failuresRequest(channel.sendKeys[0].key));
+  });
+
+  it("有效 Channel Key → 200 failed 行列表（final_failed_at 倒序，delivered 行不出现）", async () => {
+    const channel = await createChannelViaApi(`cf-list-${uniqueSuffix()}`);
+    const stub = stubFor(channel.channelId);
+    await runInDurableObject(
+      stub,
+      (_obj: unknown, state: DurableObjectState) => {
+        const sql = state.storage.sql;
+        sql.exec(
+          "INSERT INTO callbacks (wid, url, body, attempts, next_attempt_at, status, last_error, created_at, final_failed_at) " +
+            "VALUES ('m_f1', 'http://x/1', '{}', 5, 0, 'failed', 'HTTP 500', 1000, 2000)",
+        );
+        sql.exec(
+          "INSERT INTO callbacks (wid, url, body, attempts, next_attempt_at, status, last_error, created_at, final_failed_at) " +
+            "VALUES ('m_f2', 'http://x/2', '{}', 5, 0, 'failed', 'no signing secret', 1000, 3000)",
+        );
+        sql.exec(
+          "INSERT INTO callbacks (wid, url, body, attempts, next_attempt_at, status, created_at) " +
+            "VALUES ('m_delivered', 'http://x/3', '{}', 1, 0, 'delivered', 1000)",
+        );
+      },
+    );
+
+    const resp = await failuresRequest(channel.channelKey);
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      failures: {
+        wid: string;
+        url: string;
+        last_error: string | null;
+        attempts: number;
+        final_failed_at: number | null;
+        created_at: number;
+      }[];
+    };
+    expect(body.failures.length).toBe(2);
+    // final_failed_at 倒序（最新失败在最上）。
+    expect(body.failures.map((f) => f.wid)).toEqual(["m_f2", "m_f1"]);
+    expect(body.failures[0].last_error).toBe("no signing secret");
+    expect(body.failures[0].attempts).toBe(5);
+    expect(body.failures[0].final_failed_at).toBe(3000);
+    expect(body.failures[0].url).toBe("http://x/2");
+    expect(body.failures[0].created_at).toBe(1000);
+  });
+});

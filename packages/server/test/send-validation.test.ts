@@ -109,3 +109,35 @@ describe("POST /api/send validation matrix (D-02/D-04/D-06)", () => {
     expect(body.error).toEqual(envelopePayloadTooLarge.error);
   });
 });
+
+describe("POST /api/send callback_url scheme 白名单（04-02，Pitfall 6 SSRF 面收窄）", () => {
+  it("http:// 与 https:// 经 HTTP 入口接受（200）", async () => {
+    const { sendKey } = await seedChannel();
+    for (const url of ["http://cb.example/hook", "https://cb.example/hook"]) {
+      const resp = await sendRequest(
+        sendKey,
+        JSON.stringify({ text: "scheme ok", callback_url: url }),
+      );
+      expect(resp.status, url).toBe(200);
+    }
+  });
+
+  it("file:///etc/passwd、ftp://x、javascript: 前缀 → 400 invalid_body 信封", async () => {
+    const { sendKey } = await seedChannel();
+    for (const url of [
+      "file:///etc/passwd",
+      "ftp://x/hook",
+      "javascript:alert(1)",
+    ]) {
+      const resp = await sendRequest(
+        sendKey,
+        JSON.stringify({ text: "scheme bad", callback_url: url }),
+      );
+      expect(resp.status, url).toBe(400);
+      const body = (await resp.json()) as { error: { code: string } };
+      expect(body.error.code, url).toBe("invalid_body");
+      // 严格信封结构（无多余键）。
+      expect(Object.keys(body).sort(), url).toEqual(["error"]);
+    }
+  });
+});
