@@ -335,6 +335,9 @@ export class ChatRoom extends DurableObject {
     if (url.pathname === "/history" && request.method === "GET") {
       return this.handleHistory(url);
     }
+    if (url.pathname === "/callback-failures" && request.method === "GET") {
+      return this.handleCallbackFailures();
+    }
     return errorEnvelope(404, "not_found", "Unknown internal route.");
   }
 
@@ -964,6 +967,34 @@ export class ChatRoom extends DurableObject {
   }
 
   // ---- 04-02 回调投递与 alarm 多事件单槽调度器 ----
+
+  /**
+   * 回调失败记录查询（04-02，D-50/D-58 + Q3 落点）：status='failed' 行按
+   * final_failed_at 倒序 LIMIT 50（固定上界，T-04-12 accept 处置）。公网
+   * 经 Worker GET /api/callback-failures（Bearer Channel Key 域）鉴权后转发
+   * 到此（D-36 /history 转发同款——本路由绝不直连公网，X-PH-Verified 前置
+   * + binding 可达性双防线）。响应 {failures: [...]}（照 handleHistory 模式）。
+   * 全程同步游标 .toArray() 即收（SQL 纪律，Pitfall 9）。
+   */
+  private handleCallbackFailures(): Response {
+    const failures = this.ctx.storage.sql
+      .exec(
+        "SELECT wid, url, last_error, attempts, final_failed_at, created_at FROM callbacks " +
+          "WHERE status = 'failed' ORDER BY final_failed_at DESC LIMIT 50",
+      )
+      .toArray() as unknown as {
+      wid: string;
+      url: string;
+      last_error: string | null;
+      attempts: number;
+      final_failed_at: number | null;
+      created_at: number;
+    }[];
+    return new Response(JSON.stringify({ failures }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  }
 
   /** meta 单行读（miss / 值损坏返回 null——调用方各自兜底）。同步 SQL。 */
   private readMeta(key: string): string | null {

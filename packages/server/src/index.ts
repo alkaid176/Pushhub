@@ -89,6 +89,34 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
 }
 
 /**
+ * GET /api/callback-failures（04-02，D-50/D-58 服务端侧 + Q3 落点）：
+ * Bearer **Channel Key** 鉴权域（失败记录是频道域诊断数据——测试页天然持有
+ * Channel Key；Send Key 在 ch: 预检处不命中即 401，跨域隔离）。有效 key 经
+ * D-36 内部转发模式打 DO GET /callback-failures（X-PH-Verified 可信头 +
+ * 频道定位头），透传 DO 响应（{failures: [...]}，LIMIT 50 固定上界——T-04-12
+ * accept 处置：读操作 + DO SQLite 读额度 5M 行/天远超负载）。
+ */
+async function handleCallbackFailures(request: Request, env: Env): Promise<Response> {
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!auth.startsWith("Bearer ")) {
+    return INVALID_KEY();
+  }
+  const channelKey = auth.slice("Bearer ".length);
+  const info = await resolveChannelKey(env, channelKey);
+  if (info === null) {
+    return INVALID_KEY();
+  }
+  const forward = new Request(`${INTERNAL_ORIGIN}/callback-failures`, {
+    method: "GET",
+    headers: {
+      [VERIFIED_HEADER]: "1",
+      [CHANNEL_ID_HEADER]: info.channelId,
+    },
+  });
+  return env.CHANNELS.getByName(info.channelId).fetch(forward);
+}
+
+/**
  * GET /api/ws/:channelKey：Channel Key 预检（浏览器 WS 无法带鉴权头——密钥走路径段）。
  * 无效密钥不创建 DO stub（防 DoS，T-01-02）；命中则转发 WS 升级。
  */
@@ -144,6 +172,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
   }
   if (pathname === "/api/send" && request.method === "POST") {
     return handleSend(request, env);
+  }
+  if (pathname === "/api/callback-failures" && request.method === "GET") {
+    return handleCallbackFailures(request, env);
   }
   const wsMatch = /^\/api\/ws\/([^/]+)$/.exec(pathname);
   if (wsMatch !== null && request.method === "GET") {

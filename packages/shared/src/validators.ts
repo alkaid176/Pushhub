@@ -159,6 +159,10 @@ export function validateSendBody(body: unknown): SendBodyValidation {
   }
 
   // callback_url / click_url：可选 string，共用 URL_MAX 上限；null/缺省视为未提供。
+  // callback_url 额外受 scheme 白名单约束（04-02，Pitfall 6 SSRF 面收窄）：
+  // 它是服务端 DO 外呼 fetch 的发送方可控目标——非空时必须以 http:// 或
+  // https:// 开头（严格小写匹配，协议字面量口径）。click_url 是客户端展示
+  // 链接、服务端不 fetch，不适用本白名单。
   let callbackUrl: string | undefined;
   if (raw.callback_url !== undefined && raw.callback_url !== null) {
     if (typeof raw.callback_url !== "string") {
@@ -166,6 +170,15 @@ export function validateSendBody(body: unknown): SendBodyValidation {
     }
     if (raw.callback_url.length > LIMITS.URL_MAX) {
       return tooLarge("callback_url", LIMITS.URL_MAX);
+    }
+    if (
+      raw.callback_url !== "" &&
+      !raw.callback_url.startsWith("http://") &&
+      !raw.callback_url.startsWith("https://")
+    ) {
+      return invalidBody(
+        "Field 'callback_url' must use the http:// or https:// scheme.",
+      );
     }
     callbackUrl = raw.callback_url;
   }
