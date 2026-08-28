@@ -1,0 +1,31 @@
+[
+  {
+    "v": 1,
+    "type": "reply",
+    "wid": "m_2E9fKm3PqR7vXyZa",
+    "selected_option": "Acknowledge",
+    "_note": "快捷选项回复（D-46 恰一）：恰 selected_option 形态"
+  },
+  {
+    "v": 1,
+    "type": "reply",
+    "wid": "m_2E9fKm3PqR7vXyZa",
+    "text": "已处理，**发布完成** `v1.2.3`",
+    "_note": "自定义 Markdown 回复（RPL-02）：原文透传，服务端不转义不解析"
+  },
+  {
+    "v": 1,
+    "type": "reply",
+    "wid": "m_2E9fKm3PqR7vXyZa",
+    "text": "done",
+    "by": "运维笔记本",
+    "_note": "带自报展示名（D-51/D-52）：answered_by 落该值并扇出"
+  },
+  {
+    "v": 1,
+    "type": "reply",
+    "wid": "m_2E9fKm3PqR7vXyZa",
+    "selected_option": "Retry deploy",
+    "_note": "不带 by 的匿名快捷回复（D-53）：answered_by 存 null"
+  }
+]

@@ -10,5 +10,17 @@
     "type": "error",
     "code": "invalid_frame",
     "message": "Malformed frame: not a recognized v:1 client frame."
+  },
+  {
+    "v": 1,
+    "type": "error",
+    "code": "already_replied",
+    "message": "Message already replied."
+  },
+  {
+    "v": 1,
+    "type": "error",
+    "code": "not_found",
+    "message": "Message not found."
   }
 ]

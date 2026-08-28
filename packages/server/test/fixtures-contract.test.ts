@@ -6,9 +6,13 @@
  * 全文件禁止一切子集匹配式宽松断言（部分对象匹配 / 子串包含 /
  * 通配类型期望等——golden 的意义在逐字节冻结，只用严格相等与全键断言）。
  *
- * 反例闭环：message 反例驱动 validateSendBody、sync 反例驱动
+ * 反例闭环：message 反例驱动 validateSendBody、sync/reply 反例驱动
  * validateInboundFrame，拒绝 code 与 _violation 元数据尾段逐例匹配；
- * history 反例由本文件的结构检查器拒绝（服务端发射帧无入站校验器）。
+ * history/answered 反例由本文件的结构检查器拒绝（服务端发射帧无入站校验器）。
+ *
+ * 04-01 冻结（用户裁决 approve-freeze）：reply/ack/answered 三帧与
+ * already_replied/not_found 两错误码按 Task 1 实现形态逐字节冻结——
+ * 此后任何字节变化都是协议事件（D-07）。
  *
  * fixtures 经 workspace 静态 import（resolveJsonModule）——
  * 编译期依赖而非运行时读取。
@@ -16,6 +20,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BY_MAX,
   INITIAL_FETCH,
   LIMITS,
   PROTOCOL_VERSION,
@@ -26,6 +31,7 @@ import {
   validateSendBody,
 } from "@pushhub/shared/validators";
 
+import answeredFramePositive from "@pushhub/shared/fixtures/answered-frame.positive.json";
 import envelopeInvalidBody from "@pushhub/shared/fixtures/error-envelope.invalid-body.json";
 import envelopeInvalidKey from "@pushhub/shared/fixtures/error-envelope.invalid-key.json";
 import envelopePayloadTooLarge from "@pushhub/shared/fixtures/error-envelope.payload-too-large.json";
@@ -35,6 +41,8 @@ import historyFramePositive from "@pushhub/shared/fixtures/history-frame.positiv
 import messageFrameNegative from "@pushhub/shared/fixtures/message-frame.negative.json";
 import messageFramePositive from "@pushhub/shared/fixtures/message-frame.positive.json";
 import pongFramePositive from "@pushhub/shared/fixtures/pong-frame.positive.json";
+import replyFrameNegative from "@pushhub/shared/fixtures/reply-frame.negative.json";
+import replyFramePositive from "@pushhub/shared/fixtures/reply-frame.positive.json";
 import syncFrameNegative from "@pushhub/shared/fixtures/sync-frame.negative.json";
 import syncFramePositive from "@pushhub/shared/fixtures/sync-frame.positive.json";
 import wsErrorFrame from "@pushhub/shared/fixtures/ws-error-frame.json";
@@ -132,6 +140,45 @@ function assertValidHistoryFrame(frame: Json): void {
 /** 从反例 _violation 元数据尾段解析期望错误码（"reason -> code"）。 */
 function expectedCodeFrom(violation: string): string {
   return violation.split("-> ").pop() as string;
+}
+
+/**
+ * AnsweredFrame 正例结构检查器（04-01，同 history 模式——服务端发射帧、
+ * 无入站校验器，契约由本检查器锁定）。answered 恒 true（撤答扩展保留位）；
+ * answered_by 上限 BY_MAX 与 reply 帧 by 同口径（D-53）。
+ */
+function assertValidAnsweredFrame(frame: Json): void {
+  const required = [
+    "answered", "answered_at", "answered_by", "answered_content",
+    "seq", "type", "v", "wid",
+  ] as const;
+  for (const key of required) {
+    expect(frame[key] !== undefined, `answered frame missing key: ${key}`).toBe(true);
+  }
+  expect(frame.v).toBe(PROTOCOL_VERSION);
+  expect(frame.type).toBe("answered");
+  expect(typeof frame.wid).toBe("string");
+  expect((frame.wid as string).startsWith("m_")).toBe(true);
+  expect((frame.wid as string).length).toBe("m_".length + 16);
+  expect(Number.isInteger(frame.seq)).toBe(true);
+  expect((frame.seq as number) > 0).toBe(true);
+  expect(frame.answered).toBe(true);
+  expect(frame.answered_by === null || typeof frame.answered_by === "string").toBe(true);
+  if (frame.answered_by !== null) {
+    expect((frame.answered_by as string).length <= BY_MAX).toBe(true);
+  }
+  expect(Number.isInteger(frame.answered_at)).toBe(true);
+  expect(
+    frame.answered_content === null || typeof frame.answered_content === "string",
+  ).toBe(true);
+  // 键集恰好冻结：正例不得含协议外键（防 fixture 自身漂移；_ 前缀是元数据）
+  const allowed = new Set<string>(required);
+  for (const key of Object.keys(frame)) {
+    expect(
+      allowed.has(key) || key.startsWith("_"),
+      `unexpected key in answered fixture: ${key}`,
+    ).toBe(true);
+  }
 }
 
 describe("message-frame fixtures", () => {
@@ -260,6 +307,80 @@ describe("sync-frame fixtures", () => {
   });
 });
 
+describe("reply-frame fixtures（04-01 冻结：approve-freeze）", () => {
+  it("positive: 四形态（恰 option / 恰 text / 带 by / 匿名）均通过 validateInboundFrame 且返回帧与冻结形态精确相等", () => {
+    const cases = replyFramePositive as unknown as Array<Json>;
+    expect(cases.length).toBe(4);
+    const expected = [
+      { v: 1, type: "reply", wid: "m_2E9fKm3PqR7vXyZa", selected_option: "Acknowledge" },
+      { v: 1, type: "reply", wid: "m_2E9fKm3PqR7vXyZa", text: "已处理，**发布完成** `v1.2.3`" },
+      { v: 1, type: "reply", wid: "m_2E9fKm3PqR7vXyZa", text: "done", by: "运维笔记本" },
+      { v: 1, type: "reply", wid: "m_2E9fKm3PqR7vXyZa", selected_option: "Retry deploy" },
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const frame = { ...cases[i] } as Json;
+      delete frame._note;
+      const result = validateInboundFrame(JSON.stringify(frame));
+      expect(result.ok, `case ${i}`).toBe(true);
+      if (result.ok) {
+        expect(result.frame).toEqual(expected[i]);
+      }
+    }
+    // 键集断言：协议键 + _note 元数据（恰一两种形态 + by 形态各取一例）
+    expect(Object.keys(cases[0]).sort()).toEqual(["_note", "selected_option", "type", "v", "wid"]);
+    expect(Object.keys(cases[1]).sort()).toEqual(["_note", "text", "type", "v", "wid"]);
+    expect(Object.keys(cases[2]).sort()).toEqual(["_note", "by", "text", "type", "v", "wid"]);
+  });
+
+  it("negative: 9 例逐一驱动 validateInboundFrame 拒绝，code 与 _violation 尾段匹配（全 invalid_frame）", () => {
+    const cases = replyFrameNegative as unknown as Array<{
+      _violation: string;
+      frame: unknown;
+    }>;
+    expect(cases.length).toBe(9);
+    const codes: string[] = [];
+    for (const entry of cases) {
+      const result = validateInboundFrame(JSON.stringify(entry.frame));
+      expect(result.ok, entry._violation).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe(expectedCodeFrom(entry._violation));
+        codes.push(result.code);
+      }
+    }
+    // 结构层统一拒绝码：恰一/长度/wid/by 违例全走 invalid_frame（D-46；
+    // 白名单域级拒绝在 DO——reply-chain.test.ts Test 5 覆盖，不属 fixtures 反例）
+    expect(codes.every((c) => c === "invalid_frame")).toBe(true);
+  });
+});
+
+describe("answered-frame fixtures（04-01 冻结：approve-freeze）", () => {
+  it("positive: 两形态（answered_by string/null）均过结构检查器，语义字段精确断言", () => {
+    const frames = answeredFramePositive as unknown as Array<Json>;
+    expect(frames.length).toBe(2);
+    assertValidAnsweredFrame(frames[0]);
+    assertValidAnsweredFrame(frames[1]);
+    // 全键断言（排序后 toEqual——逐字节冻结纪律，同 message/history 模式）
+    expect(Object.keys(frames[0]).sort()).toEqual([
+      "_note", "answered", "answered_at", "answered_by",
+      "answered_content", "seq", "type", "v", "wid",
+    ]);
+    expect(Object.keys(frames[1]).sort()).toEqual([
+      "_note", "answered", "answered_at", "answered_by",
+      "answered_content", "seq", "type", "v", "wid",
+    ]);
+    // 例一：带展示名的快捷选项首答（D-51）
+    expect(frames[0].wid).toBe("m_2E9fKm3PqR7vXyZa");
+    expect(frames[0].seq).toBe(42);
+    expect(frames[0].answered).toBe(true);
+    expect(frames[0].answered_by).toBe("运维笔记本");
+    expect(frames[0].answered_at).toBe(1756185660000);
+    expect(frames[0].answered_content).toBe("Acknowledge");
+    // 例二：匿名自定义回复——answered_by null（D-53）+ Markdown 原文透传（RPL-02）
+    expect(frames[1].answered_by).toBe(null);
+    expect(frames[1].answered_content).toBe("custom **markdown** reply");
+  });
+});
+
 describe("history-frame fixtures", () => {
   it("positive: 翻页例与首拉 50 条截断例均过结构检查器，语义字段精确断言", () => {
     const frames = historyFramePositive as unknown as Array<Json>;
@@ -327,10 +448,12 @@ describe("error-envelope fixtures（D-06 逐 code 一例）", () => {
 });
 
 describe("ws-error-frame 与 pong fixtures", () => {
-  it("WsErrorFrame 两例：键集 [code,message,type,v] 精确、code 顺序冻结、message 与 validators 文案逐字一致", () => {
+  it("WsErrorFrame 四例：键集 [code,message,type,v] 精确、code 顺序冻结、message 与实现文案逐字一致", () => {
     const frames = wsErrorFrame as unknown as Array<Json>;
-    expect(frames.length).toBe(2);
-    expect(frames.map((f) => f.code)).toEqual(["invalid_version", "invalid_frame"]);
+    expect(frames.length).toBe(4);
+    expect(frames.map((f) => f.code)).toEqual([
+      "invalid_version", "invalid_frame", "already_replied", "not_found",
+    ]);
     for (const f of frames) {
       expect(Object.keys(f).sort()).toEqual(["code", "message", "type", "v"]);
       expect(f.v).toBe(PROTOCOL_VERSION);
@@ -338,12 +461,16 @@ describe("ws-error-frame 与 pong fixtures", () => {
       expect(typeof f.message).toBe("string");
       expect((f.message as string).length > 0).toBe(true);
     }
+    // 前两例与 validators.ts 文案逐字一致；后两例（04-01 追加）与
+    // chat-room.ts handleReply 文案逐字一致——裁决 approve-freeze 落进基线。
     expect(frames[0].message).toBe(
       `Unsupported protocol version: expected ${PROTOCOL_VERSION}.`,
     );
     expect(frames[1].message).toBe(
       "Malformed frame: not a recognized v:1 client frame.",
     );
+    expect(frames[2].message).toBe("Message already replied.");
+    expect(frames[3].message).toBe("Message not found.");
   });
 
   it("pong 帧：auto-response 回帧冻结（v:1 + type:pong，键集含 _note 元数据）", () => {

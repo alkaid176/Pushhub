@@ -30,8 +30,11 @@ golden fixtures（正反例逐字节冻结）。**任何一端可仅凭本包 + 
 | `ping` | 客户端 → 服务端 | `v, type` | 应用层心跳；服务端 `setWebSocketAutoResponse` 零唤醒自动回 `pong`（不消耗计费） |
 | `pong` | 服务端 → 客户端 | `v, type` | 心跳应答（auto-response 自动回帧） |
 | `sync` | 客户端 → 服务端 | `v, type, since, limit?` | 补拉请求。`since: null` 首次连接（拉最近 `INITIAL_FETCH` 条）；`since: n` 拉 seq > n 增量；`limit` 缺省 `SYNC_LIMIT_DEFAULT`、上限 `SYNC_LIMIT_MAX`（D-11：补拉全部走 WS，不设 HTTP 历史接口） |
+| `reply` | 客户端 → 服务端 | `v, type, wid, selected_option?, text?, by?` | 回复消息（04-01 D-45/D-46）。`selected_option` 与 `text` 恰提供其一（同真/同假均 `invalid_frame`）；`selected_option` 必须在原消息 `options` 白名单内（域级校验在服务端 DO，结构层不查）；`text` ≤ `LIMITS.TEXT_MAX` 原文透传（RPL-02——渲染消毒是客户端职责）；`by` 自报展示名 ≤ `BY_MAX` 可缺省（缺省 = 匿名回复，D-51~D-53）。不另设 HTTP 回复接口（D-45） |
 | `history` | 服务端 → 客户端 | `v, type, messages[], oldest_kept_seq, has_more` | 补拉响应。messages 按 seq 升序；`oldest_kept_seq` 为频道现存最老 seq——请求的 since 小于它时客户端呈现"更早消息已清理"分隔线，不报错不断连（D-10）；`has_more: true` 表示未拉完，客户端续翻 |
-| `error` | 服务端 → 客户端 | `v, type, code, message` | WS 侧错误帧（code 仅 `invalid_frame` / `invalid_version`） |
+| `ack` | 服务端 → 回复者本人 | `v, type, wid` | 回复成功最小确认（恰三键）——answered 帧已含全量状态 |
+| `answered` | 服务端 → 全连接扇出 | `v, type, wid, seq, answered, answered_by, answered_at, answered_content` | 回复状态同步（04-01 RPL-05）。`answered` 恒 `true`（撤答扩展保留位）；`answered_by` 为自报展示名或 null；`answered_content` 为回复原文（`selected_option ?? text`）透传。独立帧而非 message 帧重发是 SDK SeqDedup 硬约束（D-17——同 seq 重发的 message 帧会被静默丢弃） |
+| `error` | 服务端 → 客户端 | `v, type, code, message` | WS 侧错误帧（code 见下表） |
 
 ## HTTP 接口契约
 
@@ -57,8 +60,10 @@ WS 帧侧（`WsErrorFrame`）：
 
 | code | 触发条件 |
 |------|---------|
-| `invalid_frame` | 入站帧不是合法的 v:1 客户端帧（非 JSON / 非 ping、sync 结构 / since、limit 非法） |
+| `invalid_frame` | 入站帧不是合法的 v:1 客户端帧（非 JSON / 非 ping、sync、reply 结构 / since、limit、wid、恰一、长度非法 / reply 的 selected_option 不在原消息 options 白名单内） |
 | `invalid_version` | 入站帧 `v` 不等于 `PROTOCOL_VERSION` |
+| `already_replied` | reply 目标 wid 已被回复（一次锁定，D-42；04-01 追加） |
+| `not_found` | reply 目标 wid 不存在（D-42；04-01 追加） |
 
 ## 上限与窗口常量
 
@@ -76,6 +81,7 @@ WS 帧侧（`WsErrorFrame`）：
 | `RATE_LIMIT_PER_MIN` | 30 | KEY-05 每分钟限发条数（可配置，超限 429） |
 | `RATE_WINDOW_MS` | 60000 | KEY-05 固定窗口长度毫秒（窗口滚动计数重置；边界允许瞬时 2× 突发，文档化接受） |
 | `WID_PREFIX` / `WID_LENGTH` | `m_` / 16 | D-05 对外消息 ID 形态 |
+| `BY_MAX` | 64 | D-53 reply 帧 by（自报展示名）最大长度，UTF-16 码元（04-01 追加） |
 
 省略语义（SRV-02 边界，`validateSendBody` 归一规则）：可选字段的 `null`
 与缺省均视为未提供、不报错；`options` 空数组归一为省略（存储 NULL、

@@ -1,0 +1,24 @@
+[
+  {
+    "v": 1,
+    "type": "answered",
+    "wid": "m_2E9fKm3PqR7vXyZa",
+    "seq": 42,
+    "answered": true,
+    "answered_by": "运维笔记本",
+    "answered_at": 1756185660000,
+    "answered_content": "Acknowledge",
+    "_note": "快捷选项首答扇出（D-45/D-42 一次锁定）：answered_by 为自报展示名；独立帧而非 message 重发是 SeqDedup 硬约束（D-17）"
+  },
+  {
+    "v": 1,
+    "type": "answered",
+    "wid": "m_N622222222222222",
+    "seq": 240,
+    "answered": true,
+    "answered_by": null,
+    "answered_at": 1756185840000,
+    "answered_content": "custom **markdown** reply",
+    "_note": "匿名自定义回复扇出：answered_by null（D-53）+ Markdown 原文透传（RPL-02）"
+  }
+]

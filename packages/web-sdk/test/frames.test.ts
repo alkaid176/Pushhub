@@ -70,7 +70,7 @@ describe("正例：合法服务端帧 ok:true，未知字段忽略（D-07）", (
     if (r.ok) expect(r.frame.type).toBe("pong");
   });
 
-  it("ws-error-frame ×2：invalid_version / invalid_frame", () => {
+  it("ws-error-frame ×4：invalid_version / invalid_frame / already_replied / not_found", () => {
     for (const frame of wsErrorFrames) {
       const r = parseServerFrame(JSON.stringify(frame));
       expect(r.ok).toBe(true);
@@ -81,8 +81,13 @@ describe("正例：合法服务端帧 ok:true，未知字段忽略（D-07）", (
         expect(typeof e.message).toBe("string");
       }
     }
+    // 04-01 协议事件：追加 already_replied / not_found 两例（用户裁决
+    // approve-freeze 冻结；SDK parseServerFrame 的 error 守卫不枚举 code，
+    // 天然兼容——reply/answered 帧 SDK 侧消费在 04-03）。
     const codes = wsErrorFrames.map((f) => f.code);
-    expect(codes).toEqual(["invalid_version", "invalid_frame"]);
+    expect(codes).toEqual([
+      "invalid_version", "invalid_frame", "already_replied", "not_found",
+    ]);
   });
 });
 
