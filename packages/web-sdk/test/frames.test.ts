@@ -1,9 +1,10 @@
 /**
- * parseServerFrame 帧契约测试（02-01，D-07 客户端侧职责）。
+ * parseServerFrame 帧契约测试（02-01，D-07 客户端侧职责；04-03 扩 answered/ack）。
  *
- * 输入为 @pushhub/shared 全部 12 个 golden fixtures（01-02 逐字节冻结，
- * 静态 import——shared package.json exports "./fixtures/*" 已映射）：
- *  - 服务端帧正例（message/history/pong/error）→ ok:true，_note 等未知字段忽略；
+ * 输入为 @pushhub/shared golden fixtures（01-02 逐字节冻结 + 04-01 approve-freeze
+ * 追加，静态 import——shared package.json exports "./fixtures/*" 已映射）：
+ *  - 服务端帧正例（message/history/pong/error/answered）→ ok:true，_note 等
+ *    未知字段忽略；ack 三键帧本地构造验证（宽松直通照 pong 模式）；
  *  - 反例按 fatal/丢弃两档正确分流：v!==1（含缺失）→ fatal；结构违例 /
  *    未知 type（含客户端专属的 sync 帧）→ 非致命丢弃。
  */
@@ -22,6 +23,7 @@ import envelopeInvalidBody from "@pushhub/shared/fixtures/error-envelope.invalid
 import envelopeTooLarge from "@pushhub/shared/fixtures/error-envelope.payload-too-large.json";
 import envelopeRateLimited from "@pushhub/shared/fixtures/error-envelope.rate-limited.json";
 import messageNegative from "@pushhub/shared/fixtures/message-frame.negative.json";
+import answeredPositive from "@pushhub/shared/fixtures/answered-frame.positive.json";
 
 describe("正例：合法服务端帧 ok:true，未知字段忽略（D-07）", () => {
   it("message-frame.positive：13 字段全量帧", () => {
@@ -162,6 +164,75 @@ describe("guard 基础行为", () => {
 
   it("未知 type 且 v 合法 → 非致命丢弃（D-07 前瞻兼容）", () => {
     const r = parseServerFrame('{"v":1,"type":"future-thing","x":1}');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.fatal).toBe(false);
+      expect(r.message).toContain("unknown frame type");
+    }
+  });
+});
+
+describe("04-03：answered/ack 帧守卫（reply 闭环服务端帧）", () => {
+  it("answered-frame.positive ×2：深校验通过，字段逐项透传（wid/seq/answered_by/answered_at/answered_content）", () => {
+    for (const frame of answeredPositive) {
+      const r = parseServerFrame(JSON.stringify(frame));
+      expect(r.ok, frame._note ?? frame.wid).toBe(true);
+      if (r.ok) {
+        expect(r.frame.type).toBe("answered");
+        const a = r.frame as {
+          wid: string;
+          seq: number;
+          answered: boolean;
+          answered_by: string | null;
+          answered_at: number;
+          answered_content: string | null;
+        };
+        expect(a.wid).toBe(frame.wid);
+        expect(a.seq).toBe(frame.seq);
+        expect(a.answered).toBe(true); // 冻结形态恒 true（D-45）
+        expect(a.answered_by).toBe(frame.answered_by);
+        expect(a.answered_at).toBe(frame.answered_at);
+        expect(a.answered_content).toBe(frame.answered_content);
+      }
+    }
+    // 两形态在位：自报展示名 + 匿名（answered_by null）。
+    expect(answeredPositive.map((f) => f.answered_by)).toEqual(["运维笔记本", null]);
+  });
+
+  it("ack 三键帧 {v:1,type:ack,wid} → ok:true（宽松直通，pong 模式恰查三键）", () => {
+    const r = parseServerFrame('{"v":1,"type":"ack","wid":"m_2E9fKm3PqR7vXyZa"}');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.frame.type).toBe("ack");
+      expect((r.frame as { wid: string }).wid).toBe("m_2E9fKm3PqR7vXyZa");
+    }
+  });
+
+  it("ack 结构违例（wid 缺失 / wid 非字符串）→ 非致命丢弃", () => {
+    for (const raw of ['{"v":1,"type":"ack"}', '{"v":1,"type":"ack","wid":42}']) {
+      const r = parseServerFrame(raw);
+      expect(r.ok, raw).toBe(false);
+      if (!r.ok) expect(r.fatal, raw).toBe(false);
+    }
+  });
+
+  it("answered 结构违例（answered_by 数字 / answered_content 缺失）→ 非致命丢弃", () => {
+    const bad1 =
+      '{"v":1,"type":"answered","wid":"m_x","seq":1,"answered":true,"answered_by":42,"answered_at":1756185660000,"answered_content":"x"}';
+    const bad2 =
+      '{"v":1,"type":"answered","wid":"m_x","seq":1,"answered":true,"answered_by":null,"answered_at":1756185660000}';
+    for (const raw of [bad1, bad2]) {
+      const r = parseServerFrame(raw);
+      expect(r.ok, raw).toBe(false);
+      if (!r.ok) {
+        expect(r.fatal, raw).toBe(false);
+        expect(r.message, raw).not.toContain("unsupported protocol version");
+      }
+    }
+  });
+
+  it("type 拼错（answeered）→ 未知 type 非致命丢弃（非 invalid_version 路径）", () => {
+    const r = parseServerFrame('{"v":1,"type":"answeered","wid":"m_x","seq":1}');
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.fatal).toBe(false);

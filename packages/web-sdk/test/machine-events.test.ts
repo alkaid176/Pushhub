@@ -11,7 +11,9 @@
  *     re-arm(heartbeat, 30s)；FRAME(pong) → cancel(pongDeadline)；
  *  4. 服务端 WsErrorFrame 透传（非致命，连接保持）与坏帧静默丢弃；
  *  5. SYNC_PAGE_MAX=100 翻页硬上限：超限放弃 + emitError（T-02-06 防异常
- *     死循环，prohibition 单测覆盖要求）。
+ *     死循环，prohibition 单测覆盖要求）；
+ *  6. 04-03 answered/ack 映射：answered → 恰一 emitAnswered（去重路径之外）；
+ *     ack → 零动作（Q4 静默消费）。
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -22,7 +24,26 @@ import {
   type MachineAction,
 } from "../src/connection-machine";
 import { msgFrame, historyFrame } from "./helpers";
-import { SYNC_LIMIT_DEFAULT } from "@pushhub/shared";
+import { SYNC_LIMIT_DEFAULT, type AnsweredFrame } from "@pushhub/shared";
+
+/**
+ * 04-03：最小合法 answered 帧（04-01 冻结字段集）——本地构造而非 fixtures
+ * import：状态机测试关注帧→动作映射，帧守卫契约由 frames.test.ts 吃 golden
+ * fixtures 独立锁定（helpers.ts 同款分工纪律）。
+ */
+function answeredFrame(overrides: Partial<AnsweredFrame> = {}): AnsweredFrame {
+  return {
+    v: 1,
+    type: "answered",
+    wid: "m_ansFrame000001",
+    seq: 7,
+    answered: true,
+    answered_by: "运维笔记本",
+    answered_at: 1_756_185_660_000,
+    answered_content: "确认",
+    ...overrides,
+  };
+}
 
 function connectOnline(): ReturnType<typeof createMachine> {
   const m = createMachine();
@@ -207,5 +228,40 @@ describe("error 帧透传与坏帧丢弃", () => {
     expect(
       m.input({ kind: "FRAME", result: { ok: false, fatal: false, message: "unparseable frame" } }),
     ).toEqual([]);
+  });
+});
+
+describe("04-03：answered/ack 帧→动作映射（reply 闭环）", () => {
+  it("answered 帧 → 恰一个 emitAnswered 动作且携带原帧", () => {
+    const m = connectOnline();
+    // 吃掉首拉（空频道）避免 sendSync 干扰断言。
+    m.input({ kind: "FRAME", result: { ok: true, frame: historyFrame([], 0, false) } });
+    const f = answeredFrame();
+    const acts = m.input({ kind: "FRAME", result: { ok: true, frame: f } });
+    const emitted = acts.filter((a) => a.kind === "emitAnswered");
+    expect(emitted.length).toBe(1);
+    if (emitted[0]?.kind === "emitAnswered") {
+      expect(emitted[0].frame).toEqual(f); // 原帧逐字段透传（D-16 帧不加工）
+    }
+  });
+
+  it("ack 帧 → 零动作输出（Q4 定稿：ack 静默消费，无公共事件）", () => {
+    const m = connectOnline();
+    m.input({ kind: "FRAME", result: { ok: true, frame: historyFrame([], 0, false) } });
+    const acts = m.input({
+      kind: "FRAME",
+      result: { ok: true, frame: { v: 1, type: "ack", wid: "m_ansFrame000001" } },
+    });
+    expect(acts).toEqual([]);
+  });
+
+  it("同 wid 两次 answered 帧 → 两次 emitAnswered（answered 路径与 SeqDedup 完全隔离）", () => {
+    const m = connectOnline();
+    m.input({ kind: "FRAME", result: { ok: true, frame: historyFrame([], 0, false) } });
+    const f = answeredFrame();
+    const a1 = m.input({ kind: "FRAME", result: { ok: true, frame: f } });
+    const a2 = m.input({ kind: "FRAME", result: { ok: true, frame: f } });
+    expect(a1.filter((a) => a.kind === "emitAnswered").length).toBe(1);
+    expect(a2.filter((a) => a.kind === "emitAnswered").length).toBe(1);
   });
 });
