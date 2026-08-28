@@ -1,0 +1,31 @@
+[package]
+name = "pushhub-desktop"
+version = "0.1.0"
+description = "PushHub Windows 桌面客户端（Tauri 2）"
+edition = "2021"
+
+[lib]
+name = "desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2.4.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+# TLS feature 必须显式开启（Pitfall 3：默认 feature 不含 TLS——本地 ws:// 正常、
+# 生产 wss:// 全挂的阴险坑；rustls 系无系统 OpenSSL 依赖，webpki 根覆盖
+# Cloudflare 边缘证书，T-05-01-01）
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+percent-encoding = "2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

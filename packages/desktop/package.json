@@ -1,0 +1,24 @@
+{
+  "name": "@pushhub/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:frontend": "vite",
+    "build": "tauri build",
+    "build:frontend": "vite build",
+    "e2e": "playwright test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pushhub/web-sdk": "workspace:*",
+    "@tauri-apps/api": "2.11.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@tauri-apps/cli": "2.11.4",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  }
+}

@@ -25,3 +25,10 @@ packages/web-sdk/test-results/
 .planning/
 .gsd/
 
+
+# Rust 构建产物（packages/desktop/src-tauri）
+packages/desktop/src-tauri/target/
+
+# desktop Playwright E2E 运行产物
+packages/desktop/test-results/
+packages/desktop/playwright-report/
