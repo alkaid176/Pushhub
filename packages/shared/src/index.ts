@@ -46,6 +46,13 @@ export const SYNC_LIMIT_DEFAULT = 200;
 /** D-11 sync 补拉 limit 上限（一次拉不完以 has_more 翻页）。 */
 export const SYNC_LIMIT_MAX = 500;
 
+/**
+ * D-53 回复展示名（reply 帧 by 字段）最大长度：64 UTF-16 码元，
+ * 与频道名 / options 单项同口径（JS string.length）。可缺省——缺省即匿名
+ * 回复（answered_by 存 null）。与 LIMITS 同级声明（04-01 协议演进新增）。
+ */
+export const BY_MAX = 64;
+
 /** KEY-05 每 Send Key 每分钟限发条数（可配置常量，默认 30，超限 429）。 */
 export const RATE_LIMIT_PER_MIN = 30;
 
@@ -62,10 +69,14 @@ export const WID_LENGTH = 16;
 export type Priority = "low" | "normal" | "high";
 
 /**
- * 错误码枚举（D-06）。
+ * 错误码枚举（D-06；04-01 追加 already_replied / not_found——D-42 要求
+ * "已回复"与"不存在"两域级拒绝严格区分）。
  * HTTP 侧（错误信封）：invalid_key / payload_too_large / rate_limited /
  *   invalid_body / invalid_json / server_error；
- * WS 帧侧（WsErrorFrame）：invalid_frame / invalid_version。
+ * WS 帧侧（WsErrorFrame）：invalid_frame / invalid_version /
+ *   already_replied（reply 目标 wid 已被回复，一次锁定 D-42）/
+ *   not_found（reply 目标 wid 不存在）。
+ * reply 结构校验失败沿用既有 invalid_frame（与 sync 域坏帧语义一致）。
  */
 export type ErrorCode =
   | "invalid_key"
@@ -75,7 +86,9 @@ export type ErrorCode =
   | "invalid_json"
   | "server_error"
   | "invalid_frame"
-  | "invalid_version";
+  | "invalid_version"
+  | "already_replied"
+  | "not_found";
 
 /**
  * v:1 message 帧（D-03 字段集一次定全，与 messages 表 13 列一一对应）。
@@ -126,8 +139,27 @@ export interface SyncFrame {
   limit?: number;
 }
 
-/** 客户端 → 服务端帧全集（当前 v:1 仅 ping / sync 两种）。 */
-export type ClientFrame = PingFrame | SyncFrame;
+/**
+ * v:1 reply 帧（客户端 → 服务端回复，04-01 D-45/D-46——冻结协议首次合规演进，
+ * D-07 只加帧不改语义）。
+ * selected_option 与 text 恰提供其一（结构层校验：同真/同假均 invalid_frame）；
+ * selected_option 必须在原消息 options 白名单内（域级校验在 DO——需读库，
+ * 结构层纯函数不查白名单）；text 为自定义回复原文（≤ LIMITS.TEXT_MAX，
+ * 服务端哑管道透传，Markdown 渲染消毒是客户端侧职责——RPL-02）。
+ * by 为自报展示名（D-51/D-52——零账号体系，服务端不验证直接落 answered_by
+ * 并扇出；缺省即匿名回复，answered_by 存 null；上限 BY_MAX，D-53）。
+ */
+export interface ReplyFrame {
+  v: typeof PROTOCOL_VERSION;
+  type: "reply";
+  wid: string;
+  selected_option?: string;
+  text?: string;
+  by?: string;
+}
+
+/** 客户端 → 服务端帧全集（v:1：ping / sync / reply）。 */
+export type ClientFrame = PingFrame | SyncFrame | ReplyFrame;
 
 /**
  * v:1 history 帧（服务端 → 客户端补拉响应，D-10/D-11）。
@@ -144,7 +176,7 @@ export interface HistoryFrame {
   has_more: boolean;
 }
 
-/** v:1 error 帧（WS 侧错误：invalid_frame / invalid_version）。 */
+/** v:1 error 帧（WS 侧错误：invalid_frame / invalid_version / already_replied / not_found）。 */
 export interface WsErrorFrame {
   v: typeof PROTOCOL_VERSION;
   type: "error";
@@ -152,8 +184,43 @@ export interface WsErrorFrame {
   message: string;
 }
 
+/**
+ * v:1 ack 帧（服务端 → 回复者本人，04-01 D-45）——回复成功的最小确认，
+ * 恰 v/type/wid 三键（Q4 落点：不携带 seq/时间等冗余，answered 帧已含全量）。
+ */
+export interface AckFrame {
+  v: typeof PROTOCOL_VERSION;
+  type: "ack";
+  wid: string;
+}
+
+/**
+ * v:1 answered 帧（服务端 → 全连接扇出，04-01 D-45/RPL-05）。
+ * 独立帧而非 message 帧重发是 SeqDedup 硬约束（D-17——SDK 按 seq 去重会
+ * 静默丢弃同 seq 重发的 message 帧），不是偏好选择；answered 恒 true
+ * （字段保留给未来撤答扩展的形态稳定）；answered_by 为回复者自报展示名
+ * 或 null（匿名）；answered_content 为回复原文（selected_option ?? text，
+ * D-49 同源）透传不转义（RPL-02——渲染消毒是客户端侧职责）。
+ */
+export interface AnsweredFrame {
+  v: typeof PROTOCOL_VERSION;
+  type: "answered";
+  wid: string;
+  seq: number;
+  answered: boolean;
+  answered_by: string | null;
+  answered_at: number;
+  answered_content: string | null;
+}
+
 /** 服务端 → 客户端帧全集。 */
-export type ServerFrame = MessageFrame | HistoryFrame | PongFrame | WsErrorFrame;
+export type ServerFrame =
+  | MessageFrame
+  | HistoryFrame
+  | PongFrame
+  | WsErrorFrame
+  | AckFrame
+  | AnsweredFrame;
 
 /** D-06 HTTP 错误信封（结构冻结：{"error":{"code":"...","message":"..."}}）。 */
 export interface ErrorEnvelope {

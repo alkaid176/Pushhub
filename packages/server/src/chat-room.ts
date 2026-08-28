@@ -8,8 +8,10 @@
  *  - WS 升级：Hibernation API 三件套（acceptWebSocket / serializeAttachment /
  *    setWebSocketAutoResponse）——空闲不计时长（SRV-04）；
  *    accept 成功后立即推送首拉 history 帧（最近 INITIAL_FETCH 条，D-09）
- *  - webSocketMessage：validateInboundFrame 白名单校验（v:1/type/since/limit）
+ *  - webSocketMessage：validateInboundFrame 白名单校验（v:1/type/各帧字段）
  *    → sync 补拉（keyset 翻页 + limit 钳制 + oldest_kept_seq，D-10/D-11）
+ *    → reply 处理（04-01 D-45：域级校验 + answered 一次锁定落库 + ack 单发
+ *      + answered 全连接扇出）
  *  - GET /history 内部请求（03-04，D-36）：admin 排障用 keyset 倒序翻页
  *    （before 游标 + limit 钳制 + oldest_kept_seq；Worker admin 鉴权后转发）
  *
@@ -30,9 +32,13 @@ import {
   SYNC_LIMIT_MAX,
   WID_LENGTH,
   WID_PREFIX,
+  type AckFrame,
+  type AnsweredFrame,
+  type ErrorCode,
   type HistoryFrame,
   type MessageFrame,
   type Priority,
+  type ReplyFrame,
   type WsErrorFrame,
 } from "@pushhub/shared";
 import {
@@ -148,6 +154,14 @@ interface MessageRow {
   answered_at: number | null;
   answered_content: string | null;
   created_at: number;
+}
+
+/** handleReply 的目标行（messages 表按 wid 定位的所需列，04-01）。 */
+interface ReplyTargetRow {
+  seq: number;
+  options: string | null;
+  answered: number;
+  callback_url: string | null;
 }
 
 /**
@@ -604,24 +618,29 @@ export class ChatRoom extends DurableObject {
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
     // 每连接状态跨休眠存活（serializeAttachment，上限 16,384 字节——本结构极小）。
+    // displayName 为最近一次 reply 自报展示名（04-01 D-52——名字跨休眠存活，
+    // 后续 reply 默认复用；初始 null = 未报过名）。
     server.serializeAttachment({
       clientId: crypto.randomUUID(),
       connectedAt: Date.now(),
+      displayName: null,
     });
     this.sendHistory(server, null, undefined);
     return new Response(null, { status: 101, webSocket: client });
   }
 
   /**
-   * 入站业务帧（01-04）：非 string（ArrayBuffer）直接忽略；string 先过
-   * validateInboundFrame（冻结白名单：v:1 / type 枚举 / since/limit 结构，
-   * 任何入站字符串不直接进 SQL，T-01-07）。
+   * 入站业务帧（01-04 + 04-01 reply）：非 string（ArrayBuffer）直接忽略；
+   * string 先过 validateInboundFrame（冻结白名单：v:1 / type 枚举 / 各帧
+   * 字段结构，任何入站字符串不直接进 SQL，T-01-07）。
    *  - 校验失败 → 回 WsErrorFrame（invalid_version / invalid_frame）后返回，
    *    连接保持（Flagged Assumption SRV-07：服务端忽略坏帧不断连——
    *    "不识别的 v 即断连"是客户端侧职责，D-07）；
    *  - ping → 防御性忽略（auto-response 零唤醒层已按字节匹配拦截，理论上
    *    收不到；键序不同的 ping 帧落进来也不应导致任何状态变化）；
-   *  - sync → keyset 补拉（sendHistory）。
+   *  - sync → keyset 补拉（sendHistory）；
+   *  - reply → handleReply（04-01 D-45：回复链——域级校验 + answered 落库
+   *    + ack 单发 + answered 全连接扇出；三类错误帧均不断连）。
    */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string") {
@@ -629,20 +648,130 @@ export class ChatRoom extends DurableObject {
     }
     const validation = validateInboundFrame(message);
     if (!validation.ok) {
-      const errorFrame: WsErrorFrame = {
-        v: PROTOCOL_VERSION,
-        type: "error",
-        code: validation.code,
-        message: validation.message,
-      };
-      ws.send(JSON.stringify(errorFrame));
+      this.sendWsError(ws, validation.code, validation.message);
       return;
     }
     const frame = validation.frame;
     if (frame.type === "ping") {
       return;
     }
+    if (frame.type === "reply") {
+      this.handleReply(ws, frame);
+      return;
+    }
     this.sendHistory(ws, frame.since, frame.limit);
+  }
+
+  /** 单发一条 WsErrorFrame（结构/域级拒绝共用出口；不断连）。 */
+  private sendWsError(ws: WebSocket, code: ErrorCode, message: string): void {
+    const errorFrame: WsErrorFrame = {
+      v: PROTOCOL_VERSION,
+      type: "error",
+      code,
+      message,
+    };
+    ws.send(JSON.stringify(errorFrame));
+  }
+
+  /**
+   * reply 帧处理（04-01，D-42/D-44/D-45/D-46/D-51~D-53）——全程同步零
+   * await（Pitfall 5：竞态正确性唯一依赖 SELECT→UPDATE 的同步性，DO 单
+   * 线程先到先得；ack/扇出/attachment 全部排在 UPDATE 之后）：
+   *  1. SELECT 目标行（seq/options/answered/callback_url）——无行回
+   *     not_found、已置位回 already_replied（D-42 两域级拒绝严格区分，
+   *     均不断连）；
+   *  2. selected_option 白名单校验（JSON.parse(options) includes——域级，
+   *     需读库故不在 shared 纯函数）；不在白名单回 invalid_frame（结构层
+   *     同码，D-46 语义）；
+   *  3. UPDATE answered 四列（answered=1 + by/at/content）——一次锁定；
+   *  4. ack 单发回复者本人（恰 v/type/wid）；
+   *  5. answered 帧全连接扇出（handlePublish 同款遍历 + 死连接收集后
+   *     close(1011)）——独立帧而非 message 重发是 SeqDedup 硬约束（D-17）；
+   *  6. attachment 演进：by 存在时落 displayName（D-52 跨休眠存活）。
+   * callback_url 本任务读而不动作（04-02 在此挂回调入队——架构挂载点已在）。
+   */
+  private handleReply(ws: WebSocket, frame: ReplyFrame): void {
+    const rows = this.ctx.storage.sql
+      .exec(
+        "SELECT seq, options, answered, callback_url FROM messages WHERE wid = ?1",
+        frame.wid,
+      )
+      .toArray() as unknown as ReplyTargetRow[];
+    const row = rows[0];
+    if (row === undefined) {
+      this.sendWsError(ws, "not_found", "Message not found.");
+      return;
+    }
+    if (row.answered !== 0) {
+      this.sendWsError(ws, "already_replied", "Message already replied.");
+      return;
+    }
+    if (frame.selected_option !== undefined) {
+      const options: string[] =
+        row.options !== null ? (JSON.parse(row.options) as string[]) : [];
+      if (!options.includes(frame.selected_option)) {
+        this.sendWsError(
+          ws,
+          "invalid_frame",
+          "selected_option is not one of the message options.",
+        );
+        return;
+      }
+    }
+
+    // 一次锁定（D-42）：同步块内 UPDATE——先到者的 answered 落库对后到者
+    // 的 SELECT 可见，竞态无双成功的唯一保证。
+    const answeredBy = frame.by ?? null;
+    const answeredAt = Date.now();
+    const answeredContent = frame.selected_option ?? frame.text ?? null;
+    this.ctx.storage.sql.exec(
+      "UPDATE messages SET answered = 1, answered_by = ?1, answered_at = ?2, answered_content = ?3 WHERE wid = ?4",
+      answeredBy,
+      answeredAt,
+      answeredContent,
+      frame.wid,
+    );
+
+    // attachment（D-52）：展示名跨休眠存活（by 缺省不动——保留既往自报名）。
+    if (frame.by !== undefined) {
+      const attachment = ws.deserializeAttachment() as Record<string, unknown> | null;
+      ws.serializeAttachment({ ...(attachment ?? {}), displayName: frame.by });
+    }
+
+    // ack 单发（恰 v/type/wid）；回复者连接已死也不影响落库与扇出。
+    const ack: AckFrame = { v: PROTOCOL_VERSION, type: "ack", wid: frame.wid };
+    try {
+      ws.send(JSON.stringify(ack));
+    } catch {
+      // 死连接由下方扇出遍历统一收集清理。
+    }
+
+    // answered 全连接扇出（含回复者本人）；answered_content 原文透传
+    // （RPL-02 哑管道——渲染消毒是客户端侧职责）。
+    const answered: AnsweredFrame = {
+      v: PROTOCOL_VERSION,
+      type: "answered",
+      wid: frame.wid,
+      seq: row.seq,
+      answered: true,
+      answered_by: answeredBy,
+      answered_at: answeredAt,
+      answered_content: answeredContent,
+    };
+    const answeredJson = JSON.stringify(answered);
+    const dead: WebSocket[] = [];
+    for (const target of this.ctx.getWebSockets()) {
+      try {
+        target.send(answeredJson);
+      } catch {
+        dead.push(target);
+      }
+    }
+    for (const target of dead) {
+      target.close(1011, "send failed");
+    }
+    // callback_url 非空时暂不动作（04-02 挂回调入队处——row.callback_url
+    // 已读就位，功能性缺口可后补）。
   }
 
   /**

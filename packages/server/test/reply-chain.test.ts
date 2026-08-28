@@ -122,14 +122,15 @@ async function connect(stub: DurableObjectStub): Promise<WebSocket> {
   return socket;
 }
 
-/** 发布一条消息并返回 {wid, seq}。 */
+/** 发布一条消息并返回 {wid, seq}（SendResult 的 id 即 wid，D-05）。 */
 async function publishOne(
   stub: DurableObjectStub,
   body: Record<string, unknown>,
 ): Promise<{ wid: string; seq: number }> {
   const resp = await directPublish(stub, body, `tsk-rc-${uniqueId()}`);
   expect(resp.status).toBe(200);
-  return (await resp.json()) as { wid: string; seq: number };
+  const result = (await resp.json()) as { id: string; seq: number };
+  return { wid: result.id, seq: result.seq };
 }
 
 function replyFrame(body: Record<string, unknown>): string {
@@ -147,18 +148,19 @@ describe("reply chain (04-01)", () => {
     const socketA = await connect(stub);
     const socketB = await connect(stub);
 
-    // 监听先挂（attach-then-trigger）：A 依次收 ack、answered（同 handler 内
-    // 先单发后扇出，同 socket 顺序保持）；B 收 answered。
-    const ackPromise = nextFrame<AckLike>(socketA);
-    const answeredAPromise = nextFrame<AnsweredLike>(socketA);
+    // 监听先挂（attach-then-trigger）：A 用单收集器收 2 帧（同 socket 两个
+    // 独立监听器会被首帧双双触发——多帧断言必须用计数收集器）；A 依次收
+    // ack、answered（同 handler 内先单发后扇出，顺序保持），B 收 answered。
+    const aFramesPromise = nextFrames<Frame>(socketA, 2);
     const answeredBPromise = nextFrame<AnsweredLike>(socketB);
     socketA.send(replyFrame({ wid, selected_option: "Acknowledge", by: "ops-laptop" }));
 
-    const ack = await ackPromise;
+    const [ackRaw, answeredARaw] = await aFramesPromise;
+    const ack = ackRaw as AckLike;
     expect(Object.keys(ack).sort()).toEqual(["type", "v", "wid"]);
     expect(ack).toEqual({ v: 1, type: "ack", wid });
+    const answeredA = answeredARaw as AnsweredLike;
 
-    const answeredA = await answeredAPromise;
     const answeredB = await answeredBPromise;
     for (const answered of [answeredA, answeredB]) {
       expect(Object.keys(answered).sort()).toEqual([

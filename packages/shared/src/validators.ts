@@ -5,18 +5,21 @@
  *  - validateSendBody：/api/send 请求体（D-02 全部上限 + D-04 枚举 + 结构检查）。
  *    长度一律按 JS string.length（UTF-16 码元）判定；超限 413、结构/类型/枚举
  *    违例 400；未知字段一律忽略不报错（D-07 演进规则）。
- *  - validateInboundFrame：WS 入站客户端帧（ping/sync）的结构与版本检查，
- *    供 01-04 的 webSocketMessage 处理器使用。
+ *  - validateInboundFrame：WS 入站客户端帧（ping/sync/reply）的结构与版本
+ *    检查，供 webSocketMessage 处理器使用（reply 分支 04-01 新增——结构层
+ *    恰一/长度校验；白名单等域级校验在 DO）。
  *
  * 所有阈值经 index.ts 常量引用，本文件不出现裸数字阈值（可移植性禁令：
  * 上限变更只改 index.ts，四端常量同源）。
  */
 import {
+  BY_MAX,
   LIMITS,
   PROTOCOL_VERSION,
   SYNC_LIMIT_MAX,
   type ClientFrame,
   type Priority,
+  type ReplyFrame,
 } from "./index";
 
 /** validateSendBody 归一化结果：可选字段经省略语义归一（空数组/缺省/null → 不出现）。 */
@@ -287,6 +290,55 @@ export function validateInboundFrame(
       };
     }
     return { ok: true, frame: { v: PROTOCOL_VERSION, type: "sync", since } };
+  }
+
+  // reply 分支（04-01 D-45/D-46/D-53，结构层）：wid 非空 string；
+  // selected_option 与 text 恰提供其一（null 与缺省均视为未提供——省略语义
+  // 与 SRV-02 同源）；两者长度同受 LIMITS.TEXT_MAX 约束；by 可缺省，
+  // 上限 BY_MAX。selected_option 是否在原消息 options 白名单内**不在本
+  // 纯函数**——需读库，属 DO 域级校验（D-46 分层）。
+  if (frame.type === "reply") {
+    const wid = frame.wid;
+    if (typeof wid !== "string" || wid.length === 0) {
+      return invalidFrame();
+    }
+    const optionProvided =
+      frame.selected_option !== undefined && frame.selected_option !== null;
+    const textProvided = frame.text !== undefined && frame.text !== null;
+    if (optionProvided === textProvided) {
+      // 同真（都提供）或同假（都不提供）——恰一违例（D-46）。
+      return invalidFrame();
+    }
+    if (
+      optionProvided &&
+      (typeof frame.selected_option !== "string" ||
+        frame.selected_option.length > LIMITS.TEXT_MAX)
+    ) {
+      return invalidFrame();
+    }
+    if (
+      textProvided &&
+      (typeof frame.text !== "string" || frame.text.length > LIMITS.TEXT_MAX)
+    ) {
+      return invalidFrame();
+    }
+    let by: string | undefined;
+    if (frame.by !== undefined && frame.by !== null) {
+      if (typeof frame.by !== "string" || frame.by.length > BY_MAX) {
+        return invalidFrame();
+      }
+      by = frame.by;
+    }
+    const reply: ReplyFrame = { v: PROTOCOL_VERSION, type: "reply", wid };
+    if (optionProvided) {
+      reply.selected_option = frame.selected_option as string;
+    } else {
+      reply.text = frame.text as string;
+    }
+    if (by !== undefined) {
+      reply.by = by;
+    }
+    return { ok: true, frame: reply };
   }
 
   return invalidFrame();
