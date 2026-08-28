@@ -17,10 +17,19 @@
  *  - 边界：不存在 channelId -> 404 not_found；无鉴权 -> 401（checkAdminAuth
  *    先于路由判定）。
  *
+ * signing-secret 生命周期（04-02 Task 1，D-47）：
+ *  - 创建 201 响应含 signingSecret（phsig_ + 32 字符，201 唯一完整返回点先例）；
+ *  - GET reveal / POST reset 端点（Admin Key 域）：reveal 与创建值一致、reset
+ *    换新且旧值不复活；
+ *  - migrate-on-touch：旧格式 ch: 记录（无 signingSecret）reveal 惰性补发 +
+ *    KV 补写（0.1.12 前约 10 个遗留频道的零迁移演进）；
+ *  - /ws 转发落 meta：连接后 meta.signing_secret == KV 当前值（reset 后换新）。
+ *
  * 隔离策略：--max-workers=1 --no-isolate 共享存储——频道名经
  * crypto.randomUUID() 派生唯一（admin-channels 同款）。
  */
 import { env, exports } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 /** 必须与 vitest.config.ts miniflare.bindings 注入值一致（测试专用，非生产 secret）。 */
@@ -119,6 +128,8 @@ async function expectErrorEnvelope(
 interface CreatedChannel {
   channelId: string;
   channelKey: string;
+  /** 每频道签名密钥（04-02 D-47）：phsig_ + 32 字符，创建即下发。 */
+  signingSecret?: string;
   sendKeys: { key: string; label: string | null; createdAt: number }[];
   name: string;
   createdAt: number;
@@ -292,5 +303,136 @@ describe("POST reset-channel-key（D-33 / KEY-04）", () => {
     expect(freshForward.status).toBe(101);
     freshForward.webSocket!.accept();
     freshForward.webSocket!.close(1000, "done");
+  });
+});
+
+describe("signing-secret 生命周期（04-02 D-47 / KEY-04）", () => {
+  /** 读 DO meta 表单行（k -> v）。 */
+  function readMetaRows(
+    stub: DurableObjectStub,
+    key: string,
+  ): Promise<{ v: string }[]> {
+    return runInDurableObject(
+      stub,
+      (_obj: unknown, state: DurableObjectState) =>
+        state.storage.sql.exec("SELECT v FROM meta WHERE k = ?1", key).toArray() as unknown as {
+          v: string;
+        }[],
+    );
+  }
+
+  it("创建频道 201 响应含 signingSecret：phsig_ 前缀、总长恰 37（6+32）", async () => {
+    const channel = await createChannelViaApi(`ss-create-${uniqueSuffix()}`);
+    expect(typeof channel.signingSecret).toBe("string");
+    expect(channel.signingSecret!).toMatch(/^phsig_[0-9A-Za-z]{32}$/);
+    expect(channel.signingSecret!.length).toBe("phsig_".length + 32);
+  });
+
+  it("GET reveal 200 返回完整 secret（与创建响应一致）；POST reset 201 返回新值且 reveal 已换新", async () => {
+    const channel = await createChannelViaApi(`ss-reveal-${uniqueSuffix()}`);
+
+    const reveal1 = await adminRequest(
+      "GET",
+      `/api/admin/channels/${channel.channelId}/signing-secret`,
+    );
+    expect(reveal1.status).toBe(200);
+    const body1 = (await reveal1.json()) as { signingSecret: string };
+    expect(body1.signingSecret).toBe(channel.signingSecret);
+    expect(body1.signingSecret).toMatch(/^phsig_[0-9A-Za-z]{32}$/);
+
+    const reset = await adminRequest(
+      "POST",
+      `/api/admin/channels/${channel.channelId}/signing-secret`,
+    );
+    expect(reset.status).toBe(201);
+    const body2 = (await reset.json()) as { signingSecret: string };
+    expect(body2.signingSecret).toMatch(/^phsig_[0-9A-Za-z]{32}$/);
+    expect(body2.signingSecret).not.toBe(body1.signingSecret);
+
+    const reveal2 = await adminRequest(
+      "GET",
+      `/api/admin/channels/${channel.channelId}/signing-secret`,
+    );
+    expect(reveal2.status).toBe(200);
+    const body3 = (await reveal2.json()) as { signingSecret: string };
+    expect(body3.signingSecret).toBe(body2.signingSecret);
+  });
+
+  it("migrate-on-touch：旧格式 ch: 记录（无 signingSecret）reveal 惰性补发且 KV 补写该字段", async () => {
+    const channel = await createChannelViaApi(`ss-migrate-${uniqueSuffix()}`);
+    // 覆写 ch: 为旧格式（0.1.12 前遗留频道形态：三字段、无 signingSecret）。
+    await env.KV.put(
+      `ch:${channel.channelKey}`,
+      JSON.stringify({
+        channelId: channel.channelId,
+        name: channel.name,
+        createdAt: channel.createdAt,
+      }),
+    );
+
+    const reveal = await adminRequest(
+      "GET",
+      `/api/admin/channels/${channel.channelId}/signing-secret`,
+    );
+    expect(reveal.status).toBe(200);
+    const body = (await reveal.json()) as { signingSecret: string };
+    expect(body.signingSecret).toMatch(/^phsig_[0-9A-Za-z]{32}$/);
+
+    // KV 记录已补写该字段，其余字段原样保留（normalize 兼容层哲学）。
+    const stored = await env.KV.get<{
+      channelId: string;
+      name: string;
+      signingSecret?: string;
+    }>(`ch:${channel.channelKey}`, { type: "json" });
+    expect(stored).not.toBeNull();
+    expect(stored!.signingSecret).toBe(body.signingSecret);
+    expect(stored!.channelId).toBe(channel.channelId);
+    expect(stored!.name).toBe(channel.name);
+  });
+
+  it("转发落 meta：WS 连接（经 Worker 入口）后 meta.signing_secret == KV 当前值（含 reset 后换新）", async () => {
+    const channel = await createChannelViaApi(`ss-meta-${uniqueSuffix()}`);
+    const stub = env.CHANNELS.get(env.CHANNELS.idFromName(channel.channelId));
+
+    // 首连：创建时下发的 secret 经 /ws 转发头落 DO meta（RESEARCH Pattern 5：
+    // 回调仅在回复后发生、回复必经已鉴权 WS——secret 永远先于任何回调就位）。
+    const wsResp = await wsRequest(channel.channelKey);
+    expect(wsResp.status).toBe(101);
+    const socket = wsResp.webSocket!;
+    socket.accept();
+    const initial = await nextMessage(socket);
+    expect(initial.type).toBe("history");
+
+    const secretRows1 = await readMetaRows(stub, "signing_secret");
+    expect(secretRows1.length).toBe(1);
+    expect(secretRows1[0].v).toBe(channel.signingSecret);
+    const cidRows1 = await readMetaRows(stub, "channel_id");
+    expect(cidRows1.length).toBe(1);
+    expect(cidRows1[0].v).toBe(channel.channelId);
+
+    // reset 后重连：meta 换新值（admin 转发与 /ws 转发两路径收敛于同一 KV 权威值）。
+    const reset = await adminRequest(
+      "POST",
+      `/api/admin/channels/${channel.channelId}/signing-secret`,
+    );
+    expect(reset.status).toBe(201);
+    const { signingSecret: newSecret } = (await reset.json()) as {
+      signingSecret: string;
+    };
+    expect(newSecret).not.toBe(channel.signingSecret);
+
+    const wsResp2 = await wsRequest(channel.channelKey);
+    expect(wsResp2.status).toBe(101);
+    const socket2 = wsResp2.webSocket!;
+    socket2.accept();
+    const initial2 = await nextMessage(socket2);
+    expect(initial2.type).toBe("history");
+
+    const secretRows2 = await readMetaRows(stub, "signing_secret");
+    expect(secretRows2.length).toBe(1);
+    expect(secretRows2[0].v).toBe(newSecret);
+
+    socket.close(1000, "done");
+    socket2.close(1000, "done");
   });
 });
