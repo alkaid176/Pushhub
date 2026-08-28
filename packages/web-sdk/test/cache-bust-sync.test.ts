@@ -35,6 +35,7 @@ const rootPkg = JSON.parse(
 ) as { version: string };
 const indexHtmlPath = resolve(here, "../../server/public/index.html");
 const adminHtmlPath = resolve(here, "../../server/public/admin.html");
+const testHtmlPath = resolve(here, "../../server/public/test.html");
 const buildScriptPath = resolve(here, "../build.mjs");
 
 /** pushhub.js?v= 引用提取（计划指定字符类；全局标志供 matchAll 计数）。 */
@@ -70,6 +71,21 @@ describe("?v= 缓存参数与根 version 恒一致（G-02-3）", () => {
   it("admin.html 机制生效：执行一次构建后断言仍成立（注入幂等，重复构建不漂移）", () => {
     execFileSync(execPath, [buildScriptPath], { stdio: "pipe" });
     const values = refValues(readFileSync(adminHtmlPath, "utf8"));
+    expect(values.length).toBe(1);
+    expect(values[0]).toBe(rootPkg.version);
+  });
+
+  // 04-04：test.html（双向测试页）引入同款注入——第三页进 ?v= 联动清单。
+  // 同 Pattern 6 联动点：漏扩展则构建仍绿但线上测试页吃 stale SDK。
+  it("test.html pushhub.js ?v= === 根 package.json version，且引用恰出现一次", () => {
+    const values = refValues(readFileSync(testHtmlPath, "utf8"));
+    expect(values.length).toBe(1);
+    expect(values[0]).toBe(rootPkg.version);
+  });
+
+  it("test.html 机制生效：执行一次构建后断言仍成立（注入幂等，重复构建不漂移）", () => {
+    execFileSync(execPath, [buildScriptPath], { stdio: "pipe" });
+    const values = refValues(readFileSync(testHtmlPath, "utf8"));
     expect(values.length).toBe(1);
     expect(values[0]).toBe(rootPkg.version);
   });
