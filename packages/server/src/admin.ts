@@ -58,6 +58,8 @@ const CHANNELS_PATH_RE =
 const INTERNAL_ORIGIN = "https://do.pushhub.internal";
 const VERIFIED_HEADER = "X-PH-Verified";
 const SEND_KEY_HEADER = "X-PH-Send-Key";
+/** DO 代际校验用的 Channel Key 原值（WR-02；chat-room.ts 同名同值约定）。 */
+const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
 
 /** 未知 admin 路径/方法与"不存在"统一信封（不扩 D-06 错误码面；T-03-07 防探测）。 */
 const NOT_FOUND = () =>

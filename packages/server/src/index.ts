@@ -27,6 +27,8 @@ const INTERNAL_ORIGIN = "https://do.pushhub.internal";
 const VERIFIED_HEADER = "X-PH-Verified";
 /** Worker→DO 可信内部头：限流分键（KEY-05）用的 Send Key 原值，不外泄响应。 */
 const SEND_KEY_HEADER = "X-PH-Send-Key";
+/** Worker→DO 可信内部头：DO 代际校验用的 Channel Key 原值（WR-02，不外泄响应）。 */
+const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
 
 /**
  * SC4 可观测标记（02-03 Task 3，Rule 3 偏差）：Worker 实际处理的响应一律带
@@ -94,6 +96,11 @@ async function handleWebSocket(request: Request, env: Env, channelKey: string): 
   // 复制原请求（保留 Upgrade 头）重写内部 URL，附加可信内部头。
   const forward = new Request(`${INTERNAL_ORIGIN}/ws`, request);
   forward.headers.set(VERIFIED_HEADER, "1");
+  // WR-02：随转发携带 KV 解析出的 channelKey 本值（覆盖客户端可能透传的
+  // 同名头——值取自 ch: 查询结果而非客户端输入，伪造不可能）。DO 侧与
+  // kick-all 落盘的代际比对：重置后旧 Key 在 ≤60s KV 缓存窗口内重挂在此
+  // 被拒（401 信封），窗口彻底闭合。
+  forward.headers.set(CHANNEL_KEY_HEADER, channelKey);
   return env.CHANNELS.getByName(info.channelId).fetch(forward);
 }
 
