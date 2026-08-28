@@ -151,8 +151,22 @@ Plans:
   4. 测试页可可视化构造消息（title/body/options/callback_url）、观察实时消息流、发起回复——三端联调与协议排障工具就位
   5. 一条真实自动化脚本场景（如"部署完成通知 → 人工点确认 → 脚本收到回调继续执行"）端到端跑通，回调按 message_id 幂等的语义经真实接收方验证
 
-**Plans**: TBD
-**Research note**: 回调重试语义需 spike（首答触发 vs 每答触发为 spec 级产品决策）；建议带研究复查
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Tracer：回复链协议与服务端最小闭环（reply/ack/answered 三帧 + already_replied/not_found 错误码 + DO reply 处理恰一/白名单/一次锁定 + answered 全连接扇出 + 竞态集成测试 + golden fixtures 冻结）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — 签名密钥链与回调投递（每频道 signing secret 生成/KV/Admin 端点/WS 转发落 meta + callbacks 表 + alarm 多事件调度器重构 + HMAC 三头投递与 1s/2m/10m/30m 重试封顶 5 次 + failed 记录 + /api/callback-failures Channel Key 域查询 + callback_url scheme 白名单）
+- [ ] 04-03-PLAN.md — SDK 回复能力（frames answered/ack 守卫 + 状态机 emitAnswered + reply() fail-fast 公开方法 + answered 第五事件 + README 增补）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-04-PLAN.md — 测试页与生产验收（test.html/test.js 五区块双向工具 + build.mjs ?v= 注入 + callback-receiver.mjs 验签参考实现 + E2E 全交互 + smoke 回复链扩展 + 生产部署 0.1.13 + SC5 人工验收）
+
+**Research note**: 回调重试语义需 spike（首答触发 vs 每答触发为 spec 级产品决策）——已在 04-CONTEXT D-42/D-43 裁决关闭（一次锁定 + 恰首答回调一次）；A2 fetchMock spike 保留在 04-02 Task 3 前置
 **UI hint**: yes
 
 ### Phase 5: Windows 桌面客户端（Tauri 2）
@@ -198,6 +212,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. 服务端核心与协议冻结 | 5/5 | Complete    | 2026-08-26 |
 | 2. Web SDK 参考客户端 | 6/6 | Complete    | 2026-08-27 |
 | 3. 管理页与密钥生命周期 | 5/5 | Complete    | 2026-08-28 |
-| 4. 回复链与回调送达 | 0/TBD | Not started | - |
+| 4. 回复链与回调送达 | 0/4 | Not started | - |
 | 5. Windows 桌面客户端（Tauri 2） | 0/TBD | Not started | - |
 | 6. 安卓客户端（原生 Kotlin） | 0/TBD | Not started | - |
