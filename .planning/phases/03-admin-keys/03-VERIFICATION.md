@@ -1,15 +1,17 @@
 ---
 phase: 03-admin-keys
 verified: 2026-08-28T01:18:40Z
-status: human_needed
+status: passed
 score: 4/4 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 w1_resolution: "已修复（aa7ca53，2026-08-28）：admin.ts kick-all 转发补 X-PH-Channel-Key 头 + DO 直连回归测试（旧代际 401 / 新代际 101）；server 86/86 + typecheck 全绿。原 human_verification 第 1 项（W-1 处置决策）就此闭合。"
 human_verification:
+
   - test: "管理页视觉 UAT（end-of-phase 收口，03-01 D8 / 03-03 D7 / 03-04 D7 遗留）"
     expected: "浅色+深色模式下走查 /admin.html：两栏布局、间距/字号刻度、dialog 观感、历史折叠区排版无破版；确认后勾销三项 deferred UAT"
     why_human: "布局美感与 token 合规的视觉 adequacy 无自动化断言（E2E 只覆盖功能行为与 overflow）；执行方已按 human_verify_mode: end-of-phase 显式遗留至本节点"
+
   - test: "0.1.12 部署后的生产复验（review 修复上线的既定后续）"
     expected: "按项目规则版本 +1 部署后：smoke SMOKE OK + /admin.html 无 x-ph-worker + 生产频道列表正常（CR-01 后 sk: 现扫路径）；DEPLOY.md 登记 0.1.12"
     why_human: "生产部署与冒烟需 wrangler 凭据与真实环境操作；已知 pending 步骤（见 03-REVIEW-FIX.md 部署注意），非本阶段 plan 内缺口"
