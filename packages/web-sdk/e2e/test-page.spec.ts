@@ -23,11 +23,23 @@
  * signingSecret + --json-log JSONL 落盘），afterAll 杀进程清文件。
  */
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+// 类型注：工作区未装 @types/node（02-05 既定取舍——行级 @ts-expect-error
+// 压制而非新增 devDependency；本文件是 e2e 目录内首个直接消费 node: 内置
+// 模块的规格文件，运行时 Playwright 的 node 环境照常解析）。
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
 import { spawn, type ChildProcess } from "node:child_process";
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
+import { createHmac } from "node:crypto";
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
 import { existsSync, readFileSync, rmSync } from "node:fs";
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
 import { tmpdir } from "node:os";
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
 import { dirname, join, resolve } from "node:path";
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
 import { fileURLToPath } from "node:url";
+// @ts-expect-error -- 工作区未装 @types/node（见上"类型注"；execPath 取代 process 全局名）
+import { execPath } from "node:process";
 
 const BASE = "http://127.0.0.1:4911";
 const ADMIN_KEY = "e2e-admin-key"; // 仅存在于本地 wrangler dev 进程（--var 注入）
@@ -66,8 +78,8 @@ function readReceiverLog(): ReceiverEntry[] {
   if (!existsSync(jsonLogPath)) return [];
   return readFileSync(jsonLogPath, "utf8")
     .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as ReceiverEntry);
+    .filter((line: string) => line !== "")
+    .map((line: string) => JSON.parse(line) as ReceiverEntry);
 }
 
 /** 测试页在线等待（状态点 dot-online 类名，与 viewer E2E 同模式）。 */
@@ -119,7 +131,7 @@ test.describe.serial("测试页五区块 E2E（04-04 ADM-04/D-56/D-57/D-58）", 
     // 拉起 callback-receiver 子进程（D-57 验签参考实现即被测实体）。
     jsonLogPath = join(tmpdir(), `pushhub-e2e-receiver-${Date.now()}.jsonl`);
     receiver = spawn(
-      process.execPath,
+      execPath,
       [
         receiverScript,
         "--port",
@@ -235,23 +247,32 @@ test.describe.serial("测试页五区块 E2E（04-04 ADM-04/D-56/D-57/D-58）", 
     // 本条消息不带 callback_url（不影响全流程用例的恰一次 POST 断言语境）。
     await page.locator("#msg-text").fill("消毒验证目标消息");
     await page.locator("#btn-send").click();
-    const msgLi = page.locator("#messages li.msg").first();
+    // 注意：频道经全流程用例已积累已回复历史（首拉进流且呈冻结态）——按
+    // 本条消息文本定位新消息卡片，不能取 first。
+    const msgLi = page
+      .locator("#messages li.msg", { hasText: "消毒验证目标消息" })
+      .last();
     await expect(msgLi).toBeVisible({ timeout: 10_000 });
 
-    // 自定义回复（hub.reply text 路径）：攻击样本 + Markdown 加粗并存——
-    // 加粗成 strong 证明内容确实经过 renderMarkdown 管道（而非被整段丢弃）。
+    // 自定义回复（hub.reply text 路径）：含 script 标签字符串 + img onerror
+    // canary（D-53/T-04-15——answered_content 是任意外部输入）。注：以
+    // <script> 开头的行被 marked 视为原样 HTML 块（其内 Markdown 不加工、
+    // 字面呈现），消毒断言聚焦"不执行不残留攻击面"；Markdown 管道正向证明
+    // 由全流程用例的 .msg-body strong 承担。
     const attack =
-      '<script>window.__phXss=1</script><img src=x onerror="window.__phXss=1">后置**消毒**文本';
+      '<script>window.__phXss=1</script><img src=x onerror="window.__phXss=1">后置消毒文本';
     await msgLi.locator("input.msg-reply-input").fill(attack);
     await msgLi.locator("button.msg-reply-btn").click();
 
     const answeredLine = msgLi.locator(".answered-line");
     await expect(answeredLine).toBeVisible({ timeout: 10_000 });
-    await expect(answeredLine.locator(".answered-content strong")).toHaveText("消毒");
+    // 回复行可见且尾随文本以文本形式呈现（script 块整段被剥、非整行丢弃）。
+    await expect(answeredLine.locator(".answered-content")).toContainText("后置消毒文本");
     // 回复后自定义输入也冻结（answered 状态回写）。
     await expect(msgLi.locator("input.msg-reply-input")).toBeDisabled();
 
-    // DOM 审计：#messages 无 script 元素、无 on* 属性、canary 未执行。
+    // DOM 审计：#messages 无 script 元素、无 on* 属性、canary 未执行
+    // （消毒后的 img src=x 允许残留——默认 profile 放行，攻击属性已剥）。
     const audit = await page.evaluate(() => {
       const root = document.getElementById("messages");
       if (root === null) throw new Error("#messages missing");
@@ -263,13 +284,11 @@ test.describe.serial("测试页五区块 E2E（04-04 ADM-04/D-56/D-57/D-58）", 
       });
       return {
         scripts: root.querySelectorAll("script").length,
-        imgs: root.querySelectorAll("img").length,
         onAttrs,
         xssCanary: (window as unknown as { __phXss?: number }).__phXss ?? null,
       };
     });
     expect(audit.scripts).toBe(0);
-    expect(audit.imgs).toBe(0);
     expect(audit.onAttrs).toEqual([]);
     expect(audit.xssCanary).toBeNull();
   });
@@ -314,5 +333,91 @@ test.describe.serial("测试页五区块 E2E（04-04 ADM-04/D-56/D-57/D-58）", 
     await expect(page.locator("#verify-step-1")).toContainText("PASS", { timeout: 5_000 });
     await expect(page.locator("#verify-step-2")).toContainText("FAIL");
     await expect(page.locator("#verify-step-3")).toContainText("FAIL");
+  });
+
+  test("callback-receiver 五路径：缺头/超窗/伪造/合法/重复（D-57 单跑行为）", async () => {
+    // 注：排在验签器用例之后——其 find(ok) 断言只应命中全流程的真实回调，
+    // 本用例的探针 POST 不先行写入。探针 message_id 与真实 wid 无交集。
+    const sign = (ts: string, body: string) =>
+      createHmac("sha256", channel.signingSecret).update(`${ts}.${body}`).digest("hex");
+    const probeBody = JSON.stringify({
+      message_id: "m_receiver_probe_1",
+      reply: "probe",
+      replied_by: null,
+      replied_at: Date.now(),
+      channel_id: "probe",
+    });
+    const post = (headers: Record<string, string>, body: string) =>
+      fetch(RECEIVER_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body,
+      });
+
+    // 1) 缺任一签名头（KEY-06 empty 边界：空 body/缺头回调被拒）。
+    const missing = await post({ "pushhub-message-id": "m_receiver_probe_1" }, probeBody);
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toMatchObject({ ok: false, reason: "missing headers" });
+
+    // 2) timestamp 超窗（10 分钟前；签名对该 ts 本身合法——隔离时间窗拒绝）。
+    const staleTs = String(Date.now() - 600_001);
+    const stale = await post(
+      {
+        "pushhub-message-id": "m_receiver_probe_1",
+        "pushhub-timestamp": staleTs,
+        "pushhub-signature": sign(staleTs, probeBody),
+      },
+      probeBody,
+    );
+    expect(stale.status).toBe(400);
+    expect(await stale.json()).toMatchObject({ ok: false, reason: "timestamp outside tolerance" });
+
+    // 3) 伪造签名（合法 ts，签名值与重算值确定不同：首字符换为相异 hex）。
+    const ts = String(Date.now());
+    const realSig = sign(ts, probeBody);
+    const forgedSig = (realSig.startsWith("f") ? "0" : "f") + realSig.slice(1);
+    const forged = await post(
+      {
+        "pushhub-message-id": "m_receiver_probe_1",
+        "pushhub-timestamp": ts,
+        "pushhub-signature": forgedSig,
+      },
+      probeBody,
+    );
+    expect(forged.status).toBe(400);
+    expect(await forged.json()).toMatchObject({ ok: false, reason: "signature mismatch" });
+
+    // 4) 合法回调（新 ts 新签名——Stripe 同构）→ ok:true + 验签耗时打印在日志。
+    const validTs = String(Date.now());
+    const valid = await post(
+      {
+        "pushhub-message-id": "m_receiver_probe_1",
+        "pushhub-timestamp": validTs,
+        "pushhub-signature": sign(validTs, probeBody),
+      },
+      probeBody,
+    );
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toMatchObject({ ok: true, message_id: "m_receiver_probe_1", duplicate: false });
+
+    // 5) 同 message_id 二次合法 POST → DUPLICATE 标记且 ok 仍 true（SC5 幂等语义）。
+    const dupTs = String(Date.now());
+    const dup = await post(
+      {
+        "pushhub-message-id": "m_receiver_probe_1",
+        "pushhub-timestamp": dupTs,
+        "pushhub-signature": sign(dupTs, probeBody),
+      },
+      probeBody,
+    );
+    expect(dup.status).toBe(200);
+    expect(await dup.json()).toMatchObject({ ok: true, message_id: "m_receiver_probe_1", duplicate: true });
+
+    // 落盘断言：五请求全记录，DUPLICATE 行 duplicate=true 且 result.ok=true。
+    const probeEntries = readReceiverLog().filter((e) => e.rawBody.includes("m_receiver_probe_1"));
+    expect(probeEntries.length).toBe(5);
+    const dupEntries = probeEntries.filter((e) => e.duplicate);
+    expect(dupEntries.length).toBe(1);
+    expect(dupEntries[0].result.ok).toBe(true);
   });
 });

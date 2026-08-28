@@ -18,6 +18,8 @@
  *      （首连即收首拉 history 帧，D-09）
  *   ③ 记录 last_seq 后断开 → 断开期间再发 2 条 → 重连 + sync since 补拉
  *      恰补 2 条且 seq 连续（断线补拉零丢失零重复）
+ *   ③b 回复链（04-04 扩展）：对最新消息（携 options）发 reply 帧 → 断言
+ *      ack 帧 + answered 帧（wid/answered_by/answered_content 逐字段）
  *   ④ 反例两枚：无效 Send Key → 401 invalid_key；超限载荷（text 32769 字符）
  *      → 413 payload_too_large（D-02 契约）
  *   全部通过输出 SMOKE OK；任何一步失败非零退出
@@ -48,11 +50,17 @@ function fail(step, detail) {
   process.exit(1);
 }
 
-async function send(text, bearer) {
+/**
+ * send() 助手（04-04 扩展：extra 可选字段透传——options / callback_url）。
+ * 回调断言不在生产冒烟做：生产 DO 无法回连本机 localhost（观察窗在本机的
+ * 接收器对生产不可达）。SC5 回调链路由 04-04 E2E 本地链路（wrangler dev +
+ * scripts/callback-receiver.mjs）与生产人工验收（测试页 + 公网接收器）覆盖。
+ */
+async function send(text, bearer, extra) {
   return fetch(`${baseUrl}/api/send`, {
     method: "POST",
     headers: { Authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-    body: JSON.stringify({ title: "smoke", text }),
+    body: JSON.stringify({ title: "smoke", text, ...(extra ?? {}) }),
   });
 }
 
@@ -157,11 +165,11 @@ const lastSeq = body2.seq;
 socket.close(1000, "smoke disconnect");
 console.log(`OK [ws-disconnect]: closed with last_seq=${lastSeq}`);
 
-// 断开期间再发 2 条。
+// 断开期间再发 2 条（第 2 条携快捷选项——③b 回复链的目标消息）。
 const resp3 = await send("offline message #1", SEND_KEY);
 if (resp3.status !== 200) fail("offline-send", `expected 200, got ${resp3.status}: ${await resp3.text()}`);
 const body3 = await resp3.json();
-const resp4 = await send("offline message #2", SEND_KEY);
+const resp4 = await send("offline message #2", SEND_KEY, { options: ["smoke-ok"] });
 if (resp4.status !== 200) fail("offline-send", `expected 200, got ${resp4.status}: ${await resp4.text()}`);
 const body4 = await resp4.json();
 if (body4.seq !== body3.seq + 1) fail("offline-send", `seq not contiguous: ${body3.seq} -> ${body4.seq}`);
@@ -208,6 +216,45 @@ if (caught.messages[0].text !== "offline message #1" || caught.messages[1].text 
   fail("ws-catchup", `caught texts mismatch: ${JSON.stringify(caught.messages.map((m) => m.text))}`);
 }
 console.log(`OK [ws-catchup]: sync since=${lastSeq} -> exactly 2 messages (seq ${caughtSeqs.join(",")}), zero loss zero dup`);
+
+// ---- ③b 回复链（04-04 扩展，RPL-01/RPL-05 生产路径）----
+// 对断线期间第 2 条消息（wid=body4.id，携 options:["smoke-ok"]）发 reply 帧
+// （恰一载荷 selected_option + by 自报展示名）；回复者先收 ack 后收 answered
+// （04-01 冻结顺序）——逐字段断言 wid 匹配 / answered 恒 true / answered_by /
+// answered_content / answered_at 为毫秒 number。
+// 回调断言不在生产冒烟做（原因见 send() 头注——SC5 由人工验收与 E2E 覆盖）。
+const REPLY_OPTION = "smoke-ok";
+const REPLY_BY = "smoke-bot";
+frames2.length = 0; // 已消费完 history 帧——只看回复链新帧
+socket2.send(
+  JSON.stringify({ v: 1, type: "reply", wid: body4.id, selected_option: REPLY_OPTION, by: REPLY_BY }),
+);
+const replyDeadline = Date.now() + 10_000;
+while (Date.now() < replyDeadline && !frames2.some((f) => f.type === "answered")) {
+  await new Promise((r) => setTimeout(r, 50));
+}
+const ackFrame = frames2.find((f) => f.type === "ack");
+const answeredFrame = frames2.find((f) => f.type === "answered");
+if (!ackFrame || ackFrame.wid !== body4.id) {
+  fail("reply-chain", `bad/no ack frame: ${JSON.stringify(frames2).slice(0, 300)}`);
+}
+if (!answeredFrame) {
+  fail("reply-chain", `no answered frame within 10s: ${JSON.stringify(frames2).slice(0, 300)}`);
+}
+if (answeredFrame.wid !== body4.id) fail("reply-chain", `answered.wid ${answeredFrame.wid} !== ${body4.id}`);
+if (answeredFrame.answered !== true) fail("reply-chain", `answered flag !== true: ${JSON.stringify(answeredFrame)}`);
+if (answeredFrame.answered_by !== REPLY_BY) {
+  fail("reply-chain", `answered_by ${JSON.stringify(answeredFrame.answered_by)} !== ${JSON.stringify(REPLY_BY)}`);
+}
+if (answeredFrame.answered_content !== REPLY_OPTION) {
+  fail("reply-chain", `answered_content ${JSON.stringify(answeredFrame.answered_content)} !== ${JSON.stringify(REPLY_OPTION)}`);
+}
+if (typeof answeredFrame.answered_at !== "number") {
+  fail("reply-chain", `answered_at not a number: ${JSON.stringify(answeredFrame)}`);
+}
+console.log(
+  `OK [reply-chain]: ack + answered wid=${body4.id} by=${REPLY_BY} content="${REPLY_OPTION}" (恰一载荷 + options 白名单 + 一次锁定 + 全连接扇出)`,
+);
 socket2.close(1000, "smoke done");
 
 // ---- ④ 反例两枚：无效 Send Key 401 + 超限载荷 413 ----

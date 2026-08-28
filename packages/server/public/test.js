@@ -392,16 +392,24 @@
         : "，timestamp 不是有限数字");
     showStep(verifyStep1, step1Ok, step1Text);
 
-    // 第 2 步：HMAC 重算（signed payload = ts + "." + rawBody，毫秒口径 04-02）。
+    // 第 2 步：HMAC 重算一致（signed payload = ts + "." + rawBody，毫秒口径
+    // 04-02；重算值与签名头普通字符串相等比对——篡改 body 任一字节即此处 FAIL）。
     // secret 缺失即 FAIL（KEY-06 消费侧：无 secret 无从验签）。
     if (secret === "") {
-      showStep(verifyStep2, false, "第 2 步 HMAC 重算：缺少 signing secret");
+      showStep(verifyStep2, false, "第 2 步 HMAC 重算一致：缺少 signing secret");
       showStep(verifyStep3, false, "第 3 步 常时比较：前置步骤失败（无重算值可比较）");
       return;
     }
     hmacHex(secret, ts + "." + rawBody)
       .then(function (expected) {
-        showStep(verifyStep2, true, "第 2 步 HMAC 重算：sha256(secret, ts + \".\" + rawBody) = " + expected);
+        var step2Ok = expected === signature && signature !== "";
+        showStep(
+          verifyStep2,
+          step2Ok,
+          "第 2 步 HMAC 重算一致：" + (step2Ok
+            ? "sha256(secret, ts + \".\" + rawBody) 与签名头一致（= " + expected + "）"
+            : "重算 " + expected + " ≠ 签名头 " + (signature === "" ? "（空）" : signature)),
+        );
         // 第 3 步：常时比较（手写 XOR；签名缺失即 FAIL——对应"缺头回调被拒"）。
         if (signature === "") {
           showStep(verifyStep3, false, "第 3 步 常时比较：缺少 PushHub-Signature");
