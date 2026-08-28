@@ -1,18 +1,18 @@
 ---
 gsd_state_version: 1.0
-current_phase: 4
+current_phase: 04
 current_phase_name: 回复链与回调送达
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-08-28T04:31:55.766Z"
+stopped_at: Completed 04-01-PLAN.md (approve-freeze 冻结落地)
+last_updated: "2026-08-28T06:04:36.218Z"
 last_activity: 2026-08-28
-last_activity_desc: Phase 03 complete, transitioned to Phase 4
-state_head: 99ba51f2d66ceac270641c4da3b952725d419237
+last_activity_desc: Phase 04 execution started
+state_head: e306f2199516cbb39a42911b7407cbcaf7f63338
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 20
-  completed_plans: 16
+  completed_plans: 17
   percent: 50
 ---
 
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 
 ## Current Position
 
-Phase: 4 (回复链与回调送达) — READY TO EXECUTE
-Plan: Not started
+Phase: 04 (回复链与回调送达) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-08-28 — Phase 03 complete, transitioned to Phase 4
+Last activity: 2026-08-28 — Phase 04 execution started
 
-Progress: [████████████████████] 100%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [████████████████████] 100%
 | Phase 02 P05 | 10min | 2 tasks | 6 files |
 | Phase 02 P06 | 17min | 2 tasks | 4 files |
 | Phase 03 P05 | 20min | 3 tasks | 7 files |
+| Phase 04 P01 | 66min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,8 @@ Recent decisions affecting current work:
 - [Phase 03]: [Phase 03] 03-05 journey test 自建自删自证定型（零 beforeEach fixture 依赖，删除步骤即清理）+ 生产验收三件套模式（冒烟 + 标记头对照 + dashboard 人工）
 - [Phase 03]: [Phase 03] code review 六修复 + W-1 接线（0.1.12, Version 68251efb）：CR-01 sk: 每 Key 独立记录成权威源（消除 KV id: 读-改-写竞态）；WR-02 重置踢连代际校验全链路（DO meta 表 + kick-all 转发头——验证器 W-1 揭示常量声明未接线=死机制，修复 + DO 直连回归测试）；生产 SMOKE OK 279ms
 - [Phase 03]: [Phase 03] 4 项 Info 级 finding（admin 鉴权无限流/CSP connect-src/generateWid 取模/删除 TOCTOU 部分）留 /gsd-secure-phase 3 评估——03-REVIEW.md/03-REVIEW-FIX.md 在案
+- [Phase 04]: [Phase 04] 04-01 Task 2 用户裁决 approve-freeze：reply/ack/answered 帧形 + already_replied/not_found + BY_MAX=64 按 Task 1 实现形态冻结进 golden fixtures（4 项裁量点按现状落定：错误文案/null 省略语义/answered_at 非空/ack→answered 顺序）——one-way 门经用户之手关闭，此后字节变更即协议事件
+- [Phase 04]: [Phase 04] 04-01 fixtures 演进联动：ws-error-frame 追加两例后 web-sdk frames.test.ts 消费断言同步扩至四例（parseServerFrame error 守卫不枚举 code 天然兼容；reply/answered 帧 SDK 消费在 04-03）——fixture 追加即协议事件，消费方双侧同步
 
 ### Pending Todos
 
@@ -139,6 +142,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-28T03:20:14.055Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-reply-callback/04-CONTEXT.md
+Last session: 2026-08-28T06:04:35.593Z
+Stopped at: Completed 04-01-PLAN.md (approve-freeze 冻结落地)
+Resume file: None

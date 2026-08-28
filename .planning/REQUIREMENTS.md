@@ -28,11 +28,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 双向通信
 
-- [ ] **RPL-01**: 客户端可回复消息：快捷选项（发送方随消息提供）或自定义文本输入
-- [ ] **RPL-02**: 回复内容以 Markdown 格式传输与渲染
+- [x] **RPL-01**: 客户端可回复消息：快捷选项（发送方随消息提供）或自定义文本输入
+- [x] **RPL-02**: 回复内容以 Markdown 格式传输与渲染
 - [ ] **RPL-03**: 有人回复时，服务端自动把回复 POST 回发送方随消息提供的 callback_url
 - [ ] **RPL-04**: 回调送达失败时自动重试（指数退避，有上限），最终失败记录可查
-- [ ] **RPL-05**: answered 状态同步：消息被回复后，群内所有客户端实时看到该消息已回复及回复内容，防止重复处置
+- [x] **RPL-05**: answered 状态同步：消息被回复后，群内所有客户端实时看到该消息已回复及回复内容，防止重复处置
 
 ### Windows 桌面客户端（Tauri 2）
 
@@ -130,11 +130,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ADM-02 | Phase 3 | Complete |
 | ADM-03 | Phase 3 | Complete |
 | ADM-05 | Phase 3 | Complete |
-| RPL-01 | Phase 4 | Pending |
-| RPL-02 | Phase 4 | Pending |
+| RPL-01 | Phase 4 | Complete |
+| RPL-02 | Phase 4 | Complete |
 | RPL-03 | Phase 4 | Pending |
 | RPL-04 | Phase 4 | Pending |
-| RPL-05 | Phase 4 | Pending |
+| RPL-05 | Phase 4 | Complete |
 | KEY-06 | Phase 4 | Pending |
 | WEB-03 | Phase 4 | Pending |
 | ADM-04 | Phase 4 | Pending |
