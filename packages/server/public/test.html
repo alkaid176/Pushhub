@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- CSP 纵深防御（T-02-09，整体复制 index.html）：消毒层若失守，内联脚本
+         仍被拦截——script-src 'self' 禁 inline，test.js 必须独立成文件；
+         connect-src 已放行 ws/wss/http/https 外呼（验签器粘贴验证无外呼，
+         /api/send 与 /api/callback-failures 同源相对路径）。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src * data:; base-uri 'self'; form-action 'self'"
+    />
+    <title>PushHub 测试页</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 16px;
+        line-height: 1.5;
+      }
+      h1 { font-size: 1.4rem; margin: 0 0 4px; }
+      h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+      .page-desc { color: graytext; font-size: 0.85rem; margin: 0 0 16px; }
+      .panel {
+        padding: 12px;
+        border: 1px solid canvastext;
+        border-radius: 8px;
+        margin-bottom: 16px;
+      }
+      form.grid-form {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 6px 8px;
+        align-items: center;
+      }
+      form.grid-form label { font-size: 0.85rem; white-space: nowrap; }
+      form.grid-form input,
+      form.grid-form select,
+      form.grid-form textarea {
+        font: inherit;
+        padding: 6px 8px;
+        border: 1px solid canvastext;
+        border-radius: 4px;
+        min-width: 0;
+      }
+      form.grid-form button {
+        font: inherit;
+        padding: 6px 18px;
+        cursor: pointer;
+      }
+      textarea { width: 100%; resize: vertical; }
+      .statusline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 12px 0;
+        font-size: 0.9rem;
+      }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .dot-idle { background: #9a9a9a; }
+      .dot-connecting { background: #d9a300; }
+      .dot-online { background: #2e9e5b; }
+      .dot-reconnecting { background: #e67200; }
+      .dot-offline { background: #c0392b; }
+      .error-bar {
+        margin: 8px 0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: #c0392b;
+        color: #fff;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+      .result-line {
+        margin: 8px 0 0;
+        font-size: 0.85rem;
+        font-family: ui-monospace, monospace;
+        word-break: break-all;
+        white-space: pre-wrap;
+      }
+      .messages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .messages .msg {
+        border: 1px solid canvastext;
+        border-radius: 8px;
+        padding: 8px 12px;
+      }
+      .msg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+      .msg-head time { color: graytext; font-size: 0.75rem; font-family: ui-monospace, monospace; }
+      .msg-wid { color: graytext; font-size: 0.75rem; font-family: ui-monospace, monospace; }
+      .msg-body { overflow-wrap: anywhere; }
+      .msg-body pre { overflow-x: auto; padding: 8px; border-radius: 4px; background: canvasinfoBg; }
+      .msg-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+      .msg-actions button { font: inherit; font-size: 0.85rem; padding: 4px 12px; cursor: pointer; }
+      .msg-actions button:disabled { cursor: default; opacity: 0.5; }
+      .msg-actions input {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 4px 8px;
+        border: 1px solid canvastext;
+        border-radius: 4px;
+        min-width: 12em;
+      }
+      .answered-line {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px dashed canvastext;
+        font-size: 0.9rem;
+      }
+      .verify-steps { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+      .verify-step {
+        border: 1px solid canvastext;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 0.85rem;
+        font-family: ui-monospace, monospace;
+        word-break: break-all;
+      }
+      .verify-step.pass { border-color: #2e9e5b; }
+      .verify-step.fail { border-color: #c0392b; }
+      table.failures { border-collapse: collapse; width: 100%; font-size: 0.8rem; margin-top: 8px; }
+      table.failures th, table.failures td {
+        border: 1px solid canvastext;
+        padding: 4px 8px;
+        text-align: left;
+        word-break: break-all;
+        vertical-align: top;
+      }
+      .empty-state { color: graytext; font-size: 0.85rem; margin-top: 8px; }
+      .tradeoff-note { color: graytext; font-size: 0.78rem; margin: 6px 0 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>PushHub 测试页</h1>
+      <p class="page-desc">
+        双向链路联调与排障工具（ADM-04/D-55）：构造消息发送（Send Key）、实时收流与回复
+        （Channel Key 经 /pushhub.js）、回调验签器（D-56）、回调失败记录查询（D-58）。
+        本页经静态资产分发（不产生 Worker 请求计费）。
+        Channel Key / 服务端地址 / 展示名会保存在本机浏览器 localStorage（键
+        pushhub.server / pushhub.key / pushhub.name），下次打开免填；
+        <strong>Send Key 只保留在本页会话内存（输入框），不写入任何本地存储</strong>——
+        关闭页面即失效，防更高权限密钥滞留浏览器（Pitfall 7 取舍）。
+      </p>
+    </header>
+
+    <!-- 区块一：连接配置（server / Channel Key / Send Key / 展示名） -->
+    <section class="panel" id="connect-panel">
+      <h2>① 连接配置</h2>
+      <form id="connect-form" class="grid-form">
+        <label for="server-url">服务端地址</label>
+        <input id="server-url" name="server" type="text" autocomplete="off" spellcheck="false" placeholder="https://pushhub.example.com" />
+        <button type="submit">连接</button>
+        <label for="channel-key">Channel Key</label>
+        <input id="channel-key" name="key" type="password" autocomplete="off" spellcheck="false" placeholder="phc_…" />
+        <span></span>
+        <label for="send-key">Send Key（仅会话内存）</label>
+        <input id="send-key" name="sendkey" type="password" autocomplete="off" spellcheck="false" placeholder="phs_…" />
+        <span></span>
+        <label for="display-name">展示名（回复署名）</label>
+        <input id="display-name" name="name" type="text" autocomplete="off" spellcheck="false" maxlength="64" placeholder="可空 = 匿名回复" />
+        <span></span>
+      </form>
+      <div class="statusline">
+        <span id="status-dot" class="dot dot-idle"></span>
+        <span id="status-text">未连接</span>
+      </div>
+      <div id="error-bar" class="error-bar" hidden></div>
+    </section>
+
+    <!-- 区块二：消息构造表单（title/text/priority/options ≤4/callback_url） -->
+    <section class="panel" id="compose-panel">
+      <h2>② 构造消息（POST /api/send，Bearer Send Key）</h2>
+      <form id="compose-form" class="grid-form">
+        <label for="msg-title">标题</label>
+        <input id="msg-title" type="text" autocomplete="off" placeholder="可选，≤256 字符" />
+        <span></span>
+        <label for="msg-text">正文（Markdown）</label>
+        <textarea id="msg-text" rows="4" placeholder="必填，支持 Markdown（≤32768 字符）"></textarea>
+        <span></span>
+        <label for="msg-priority">优先级</label>
+        <select id="msg-priority">
+          <option value="normal" selected>normal</option>
+          <option value="low">low</option>
+          <option value="high">high</option>
+        </select>
+        <span></span>
+        <label for="msg-option-1">快捷选项 1</label>
+        <input id="msg-option-1" type="text" autocomplete="off" placeholder="可空；最多 4 项，每项 ≤64 字符" />
+        <span></span>
+        <label for="msg-option-2">快捷选项 2</label>
+        <input id="msg-option-2" type="text" autocomplete="off" placeholder="" />
+        <span></span>
+        <label for="msg-option-3">快捷选项 3</label>
+        <input id="msg-option-3" type="text" autocomplete="off" placeholder="" />
+        <span></span>
+        <label for="msg-option-4">快捷选项 4</label>
+        <input id="msg-option-4" type="text" autocomplete="off" placeholder="" />
+        <span></span>
+        <label for="msg-callback-url">callback_url</label>
+        <input id="msg-callback-url" type="text" autocomplete="off" spellcheck="false" placeholder="可选 http(s)://…——回复触发签名回调 POST" />
+        <span></span>
+        <span></span>
+        <button id="btn-send" type="submit">发送</button>
+        <span></span>
+      </form>
+      <p id="send-result" class="result-line" hidden></p>
+    </section>
+
+    <!-- 区块三：实时消息流（含回复交互与 answered 回写） -->
+    <section class="panel" id="stream-panel">
+      <h2>③ 实时消息流（点击快捷选项或提交自定义回复）</h2>
+      <ul id="messages" class="messages"></ul>
+    </section>
+
+    <!-- 区块四：回调验签器（D-56：时间窗 / HMAC 重算 / XOR 常时比较） -->
+    <section class="panel" id="verify-panel">
+      <h2>④ 回调验签器（粘贴三头 + body + secret）</h2>
+      <form id="verify-form" class="grid-form">
+        <label for="verify-secret">signing secret</label>
+        <input id="verify-secret" type="password" autocomplete="off" spellcheck="false" placeholder="phsig_…" />
+        <span></span>
+        <label for="verify-message-id">PushHub-Message-Id</label>
+        <input id="verify-message-id" type="text" autocomplete="off" spellcheck="false" placeholder="m_…" />
+        <span></span>
+        <label for="verify-timestamp">PushHub-Timestamp</label>
+        <input id="verify-timestamp" type="text" autocomplete="off" spellcheck="false" placeholder="毫秒 epoch" />
+        <span></span>
+        <label for="verify-signature">PushHub-Signature</label>
+        <input id="verify-signature" type="text" autocomplete="off" spellcheck="false" placeholder="HMAC-SHA256 hex" />
+        <span></span>
+        <label for="verify-rawbody">rawBody（原样字节）</label>
+        <textarea id="verify-rawbody" rows="4" placeholder="回调 POST 的原始 body 字符串（勿重新格式化——签名覆盖字节）"></textarea>
+        <span></span>
+        <span></span>
+        <button id="btn-verify" type="submit">验签</button>
+        <span></span>
+      </form>
+      <div class="verify-steps">
+        <div id="verify-step-1" class="verify-step" hidden></div>
+        <div id="verify-step-2" class="verify-step" hidden></div>
+        <div id="verify-step-3" class="verify-step" hidden></div>
+      </div>
+      <p class="tradeoff-note">
+        常时比较为浏览器手写 XOR 累加（crypto.subtle.timingSafeEqual 是 Workers
+        专有扩展，Chrome/Firefox/Safari 不存在——Pitfall 3）；时间窗 300000ms、
+        毫秒口径与服务端 04-02 契约一致。
+      </p>
+    </section>
+
+    <!-- 区块五：回调失败记录查询（D-58：GET /api/callback-failures，Bearer Channel Key） -->
+    <section class="panel" id="failures-panel">
+      <h2>⑤ 回调失败记录查询</h2>
+      <button id="btn-failures" type="button">查询失败记录</button>
+      <div id="failures-result"></div>
+    </section>
+
+    <!-- ?v= 缓存规避：构建期由 build.mjs 自动注入根 package.json version，勿手改（cache-bust-sync.test.ts 恒一致断言护航）。 -->
+    <script src="/pushhub.js?v=0.1.12"></script>
+    <script src="/test.js"></script>
+  </body>
+</html>
