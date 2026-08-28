@@ -730,23 +730,28 @@ function verify(rawBody, headers, secret, toleranceMs = 300_000) {
 
 **其余全部 claims 已 VERIFIED/CITED**（代码引用开行号、平台事实引官方文档）。
 
-## Open Questions
+## Open Questions (RESOLVED — 各条落点已在 04-01~04-04 PLAN 定稿)
 
 1. **signing secret 管理 UI 的落点（D-47 与 D-58 表面冲突）**
    - What we know: D-47 说"管理页可查可重置（掩码显示同 D-29）"；D-58 说"管理页本期不动（admin.js 不再膨胀）"。
    - What's unclear: 查/重置的 UI 放哪。
    - Recommendation: 本期交付 **API 端点**（GET reveal / POST reset，CHANNELS_PATH_RE 白名单加 `signing-secret` 段）+ 201/200 响应即完整值返回（D-13 唯一完整返回点先例）；admin.html UI 集成延后（尊重 D-58）。若用户想要 UI，最小方案是 test 页加一个可选 Admin Key 的管理小区块。规划时向用户确认。
+   - **✅ RESOLVED:** 04-02 PLAN 采用推荐方案（API 端点本期交付、admin UI 延后），记为 flagged assumption；04-02 Task 2 checkpoint 向用户附带披露。
 2. **timestamp 单位（ms vs s）**
    - What we know: 协议全域时间戳（created_at/answered_at）都是 Date.now() 毫秒。
    - Recommendation: 毫秒，全局同口径；测试页验签器与 callback-receiver.mjs 同值常量。风险见 A6。
+   - **✅ RESOLVED:** 04-02 PLAN 定稿毫秒（与 created_at/answered_at 同口径）。
 3. **失败记录查询 API 的鉴权层级**
    - What we know: D-58 锁测试页为入口；测试页天然持有 Channel Key 与 Send Key。
    - Recommendation: 新公网路由 `GET /api/callback-failures`（Bearer **Channel Key**，KEY-01 定义 Channel Key = 接收+回复权限，失败记录是频道域诊断数据）→ Worker ch: 预检 → DO 内部 `/callback-failures` 转发（D-36 模式换鉴权域）。备选：admin 域路由（测试页需加 Admin Key 输入，加重使用负担）。规划定稿。
+   - **✅ RESOLVED:** 04-02 PLAN 定稿 Channel Key Bearer 域（推荐方案）。
 4. **ack 帧字段最小集**
    - What we know: D-45 锁三帧但字段细节 discretionary。
    - Recommendation: `{v, type:"ack", wid}` 最小集（成功信号无需冗余——answered 扇出紧随其后携带全量状态）；SDK 静默消费 ack、以 answered 事件为公共确认信号。
+   - **✅ RESOLVED:** 04-01 PLAN Task 1 定稿 `{v, type:"ack", wid}`；SDK 侧静默消费（04-03）。
 5. **回调即时首投（t0）在 reply 处理内同步做还是入队后立即 dispatch**
    - Recommendation: 入队 + 立即 dispatch 一次（复用同一条投递函数），失败才走 alarm 档位——代码单路径、竞态面最小。
+   - **✅ RESOLVED:** 04-02 PLAN 定稿入队 + 立即 dispatch 单路径。
 
 ## Environment Availability
 
