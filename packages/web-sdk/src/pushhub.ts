@@ -1,14 +1,17 @@
 /**
- * PushHub —— Web SDK 公开 API 类（02-01 tracer，02-02 重构为状态机 adapter）。
+ * PushHub —— Web SDK 公开 API 类（02-01 tracer，02-02 重构为状态机 adapter，
+ * 04-03 扩 reply()/answered——纯加法第五事件，四事件 API 表面零变更）。
  *
  * 公开契约（Task 2 checkpoint:decision 用户裁决 approve-recommended，one-way）：
  *  - 构造函数恰两参 new PushHub(serverUrl, channelKey)，构造即自动连接（D-18）；
- *  - on 四事件（D-16）：message（实时帧逐条）/ history（补拉批次，messages
- *    已按去重窗口过滤——D-16×D-17 交集语义：宿主永不见重复消息，帧结构
- *    oldest_kept_seq/has_more 原样透传）/ status / error；
+ *  - on 五事件（D-16 + 04-03 answered）：message（实时帧逐条）/ history（补拉
+ *    批次，messages 已按去重窗口过滤——D-16×D-17 交集语义：宿主永不见重复
+ *    消息，帧结构 oldest_kept_seq/has_more 原样透传）/ status / error /
+ *    answered（群内处置结果扇出，含自己回复后的回声——宿主按 wid 幂等消化）；
  *  - status 枚举 "connecting" | "online" | "reconnecting" | "offline"；
  *  - error 载荷 { message: string; code?: string; fatal?: boolean }；
- *  - connect() / disconnect() / destroy()；静态 PushHub.renderMarkdown(text)
+ *  - connect() / disconnect() / destroy()；reply(wid, payload, by?)（04-03，
+ *    fail-fast——WEB-03 边界）；静态 PushHub.renderMarkdown(text)
  *    （D-19 纯函数辅助，SDK 无 UI 无 DOM 所有权）。
  *
  * 02-02 架构（connection-machine.ts 纯状态机 + 本文件薄 adapter）：
@@ -32,7 +35,7 @@
  *  - 错误事件载荷绝不包含 Channel Key 子串（密钥即身份，不进日志/错误——
  *    与 server/src/index.ts 同款纪律）。
  */
-import { PROTOCOL_VERSION, type HistoryFrame, type MessageFrame } from "@pushhub/shared";
+import { PROTOCOL_VERSION, type AnsweredFrame, type HistoryFrame, type MessageFrame } from "@pushhub/shared";
 import { parseServerFrame } from "./frames";
 import {
   createMachine,
@@ -48,13 +51,17 @@ import { renderMarkdown } from "./render/render-markdown";
 // 状态机与 adapter 共用，此处 re-export 保持宿主 import 路径兼容）。
 export type { PushHubStatus, PushHubErrorPayload } from "./connection-machine";
 
-/** D-16 事件名枚举。 */
-export type PushHubEvent = "message" | "history" | "status" | "error";
+/**
+ * D-16 事件名枚举 + 04-03 answered 第五事件（纯加法——D-16 one-way 契约
+ * 不动，与 D-07 演进哲学同构）。
+ */
+export type PushHubEvent = "message" | "history" | "status" | "error" | "answered";
 
 type MessageListener = (message: MessageFrame) => void;
 type HistoryListener = (frame: HistoryFrame) => void;
 type StatusListener = (status: PushHubStatus) => void;
 type ErrorListener = (error: PushHubErrorPayload) => void;
+type AnsweredListener = (frame: AnsweredFrame) => void;
 
 /**
  * 心跳出站帧（Pitfall 4）：逐字节等于服务端 auto-response 匹配串
@@ -69,12 +76,13 @@ export class PushHub {
   private readonly wsUrl: string;
   private readonly listeners: Record<
     PushHubEvent,
-    Set<MessageListener | HistoryListener | StatusListener | ErrorListener>
+    Set<MessageListener | HistoryListener | StatusListener | ErrorListener | AnsweredListener>
   > = {
     message: new Set(),
     history: new Set(),
     status: new Set(),
     error: new Set(),
+    answered: new Set(),
   };
 
   private readonly machine = createMachine();
@@ -111,12 +119,80 @@ export class PushHub {
   on(name: "history", cb: HistoryListener): this;
   on(name: "status", cb: StatusListener): this;
   on(name: "error", cb: ErrorListener): this;
+  on(name: "answered", cb: AnsweredListener): this;
   on(
     name: PushHubEvent,
-    cb: MessageListener | HistoryListener | StatusListener | ErrorListener,
+    cb: MessageListener | HistoryListener | StatusListener | ErrorListener | AnsweredListener,
   ): this {
     this.listeners[name].add(cb);
     return this;
+  }
+
+  /**
+   * 回复消息（WEB-03，04-03——reply 不进连接状态机，Pattern 7 定稿 fail-fast）。
+   *
+   * 三步防御（服务端仍是权威校验，本地拒绝只省一次往返）：
+   *  1. 载荷恰一：selected_option 与 text 同真或同假 → error(invalid_frame)；
+   *  2. 连接在线：machine.status 非 online（或 ws 为 null / readyState 非
+   *     OPEN）→ error(not_connected)——不排队不重试不抛异常（WEB-03 边界
+   *     由 fail-fast 语义解析；重试是把业务策略混进连接层，prohibition）；
+   *  3. 发送 v:1 reply 帧——text 以 Markdown 原文直发（SDK 零转义预处理，
+   *     RPL-02；渲染消毒由宿主经 renderMarkdown 完成）。
+   *
+   * by 为自报展示名（≤ BY_MAX=64 UTF-16 码元，D-53）——SDK 不持久化（无
+   * localStorage 依赖纪律，D-24/D-52 模式，持久化由宿主承担）；缺省即匿名
+   * 回复（服务端 answered_by 存 null）。本地拒绝与服务端域级拒绝
+   * （not_found / already_replied / 白名单外 invalid_frame）都经同一 error
+   * 事件透传，连接保持不断开。
+   */
+  reply(
+    wid: string,
+    payload: { selected_option: string } | { text: string },
+    by?: string,
+  ): void {
+    // (1) 载荷恰一（JS 分发的 IIFE 产物，宿主可能传类型外载荷——运行时
+    //     防御独立于类型层；truthiness 判定与服务端"null 视为未提供"同源）。
+    const hasOption = "selected_option" in payload && Boolean(payload.selected_option);
+    const hasText = "text" in payload && Boolean(payload.text);
+    if (hasOption === hasText) {
+      this.emit("error", {
+        message: "reply payload must provide exactly one of selected_option or text",
+        code: "invalid_frame",
+      });
+      return;
+    }
+    // (2) 连接检查：fail-fast——用户重试语义属宿主业务层（如等 status 回
+    //     online 后由宿主自行重发），SDK 不排队。
+    if (
+      this.machine.status !== "online" ||
+      this.ws === null ||
+      this.ws.readyState !== WebSocket.OPEN
+    ) {
+      this.emit("error", {
+        message: "reply failed: not connected",
+        code: "not_connected",
+      });
+      return;
+    }
+    // (3) 发帧（照 sendSync 接线模式；by 缺省不序列化——键不出现即省略语义）。
+    try {
+      this.ws.send(
+        JSON.stringify({
+          v: PROTOCOL_VERSION,
+          type: "reply",
+          wid,
+          ...payload,
+          ...(by !== undefined ? { by } : {}),
+        }),
+      );
+    } catch {
+      // readyState 检查后仍可能竞态关闭（send 抛 InvalidStateError）——
+      // 按 not_connected fail-fast，与第 (2) 步同语义。
+      this.emit("error", {
+        message: "reply failed: send on closed socket",
+        code: "not_connected",
+      });
+    }
   }
 
   /** 主动连接（disconnect 后可再连恢复，D-18）。 */
@@ -140,6 +216,7 @@ export class PushHub {
     this.listeners.history.clear();
     this.listeners.status.clear();
     this.listeners.error.clear();
+    this.listeners.answered.clear();
   }
 
   // ---- adapter：事件进 / 动作出 ----
@@ -207,6 +284,9 @@ export class PushHub {
         return;
       case "emitHistory":
         this.emit("history", action.frame);
+        return;
+      case "emitAnswered":
+        this.emit("answered", action.frame);
         return;
       case "emitError":
         this.emit("error", action.error);
@@ -292,9 +372,10 @@ export class PushHub {
   private emit(name: "history", payload: HistoryFrame): void;
   private emit(name: "status", payload: PushHubStatus): void;
   private emit(name: "error", payload: PushHubErrorPayload): void;
+  private emit(name: "answered", payload: AnsweredFrame): void;
   private emit(
     name: PushHubEvent,
-    payload: MessageFrame | HistoryFrame | PushHubStatus | PushHubErrorPayload,
+    payload: MessageFrame | HistoryFrame | PushHubStatus | PushHubErrorPayload | AnsweredFrame,
   ): void {
     const set = this.listeners[name] as Set<(p: unknown) => void>;
     for (const cb of set) {

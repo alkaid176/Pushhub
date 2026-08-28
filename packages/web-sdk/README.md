@@ -9,7 +9,7 @@
   命中不计 Worker 请求额度，SC4）
 - 源码：`packages/web-sdk/src/`（`pushhub.ts` 公开类；`connection-machine.ts`
   纯状态机；`render/render-markdown.ts` 可移植渲染模块）
-- 行为基线：单测 68 例 + Playwright E2E（tracer / reconnect / viewer 三 spec）
+- 行为基线：单测 100 例 + Playwright E2E（tracer / reconnect / viewer 三 spec）
 
 ## 两行接入（WEB-01 形态）
 
@@ -24,13 +24,14 @@
 WS URL（`http→ws` / `https→wss` + `/api/ws/<encodeURIComponent(channelKey)>`）。
 demo 查看器（`https://pushhub.dyun.org/`）就是这两行接入的活样本（D-23）。
 
-## 四事件（D-16）
+## 五事件（D-16 + 04-03 answered）
 
 ```ts
 hub.on("message", (m: MessageFrame) => {});
 hub.on("history", (h: HistoryFrame) => {});
 hub.on("status", (s: PushHubStatus) => {});
 hub.on("error", (e: PushHubErrorPayload) => {});
+hub.on("answered", (a: AnsweredFrame) => {}); // 04-03 第五事件（纯加法）
 ```
 
 `on()` 返回实例本身（可链式）。同一事件可注册多个回调；宿主回调抛异常不会
@@ -42,6 +43,11 @@ hub.on("error", (e: PushHubErrorPayload) => {});
 | `history` | `HistoryFrame`（`messages[]`、`oldest_kept_seq`、`has_more`） | 补拉批次（首拉 + 重连 sync + 翻页统一走此事件，SDK 不展开批次进 message）。**on("history") 载荷的 messages 永远只含宿主未见消息；oldest_kept_seq 与 has_more 原样透传**（D-16×D-17 交集契约：SDK 去重窗口消化实时与补拉的交叠，宿主两侧合流永不见重复；`oldest_kept_seq` 大于 1 且宿主已翻到保留窗口底部时可呈现"更早消息已清理"分隔线，D-10 诚实缺口语义） |
 | `status` | `"connecting" \| "online" \| "reconnecting" \| "offline"` | 连接状态变化（仅变化时发射）。首连 `connecting→online`；意外断连 `reconnecting→connecting→online`；主动 `disconnect()` 后为 `offline` |
 | `error` | `{ message: string; code?: string; fatal?: boolean }` | 错误载荷。`fatal: true`（如服务端线协议版本不识别，v!==1）后 SDK 断开且不再自动重连，需宿主调 `connect()` 手动恢复。载荷绝不包含 Channel Key 子串 |
+| `answered` | `AnsweredFrame`（`wid`、`seq`、`answered: true`、`answered_by: string \| null`、`answered_at: number`、`answered_content: string \| null`） | 群内**任何人**对消息的处置结果实时扇出（04-03 第五事件，回复闭环）。含自己回复后的回声——同一 wid 可能多次到达（多端竞态），宿主按 `wid` 幂等消化。**安全**：`answered_content` 是回复 Markdown 原文（透传不转义，进 DOM 前必经 `PushHub.renderMarkdown`）；`answered_by` 是自报展示名，渲染必须用 `textContent` 直插、不可拼进 innerHTML（D-53） |
+
+`ack` 帧（回复者本人的最小确认 `{v,type,wid}`）被 SDK **静默消费——无公共事件**
+（04-01 Q4 定稿：answered 扇出即公共确认信号；回复者由随后的 answered 自证
+回复成功，单独 ack 公共事件徒增 API 面）。
 
 消息帧字段全集见 `@pushhub/shared`（`packages/shared/src/index.ts`）——SDK 与
 服务端共用同一协议事实源，本 SDK 不私自加工帧结构。
@@ -57,6 +63,42 @@ hub.on("error", (e: PushHubErrorPayload) => {});
 
 SDK 内部同时注册 `visibilitychange`（D-27 探活）：页面回前台主动 ping + 5 秒
 死线，超时强制重连续补拉（iOS Safari 冻结恢复路径）；`destroy()` 会移除监听。
+
+## 回复消息：hub.reply()（WEB-03，04-03）
+
+```ts
+hub.reply(wid, { selected_option: "确认" }, "运维笔记本"); // 快捷选项 + 自报展示名
+hub.reply(wid, { text: "**自定义** Markdown 回复" });      // 自定义输入（匿名）
+```
+
+| 参数 | 约束 |
+|------|------|
+| `wid` | 目标消息 ID（`message` / `answered` 帧的 `wid` 字段） |
+| `payload` | **恰一载荷**：`selected_option`（须在原消息 `options` 白名单内——域级校验在服务端）或 `text`（Markdown 原文 ≤ 32KB，SDK 零转义直发，RPL-02 哑管道） |
+| `by?` | 自报展示名，≤ 64 UTF-16 码元（`BY_MAX`，D-53）。SDK **不持久化**（持久化由宿主承担）；缺省即匿名回复（`answered_by` 存 null） |
+
+**fail-fast 语义（不排队、不重试、不抛异常）**——两种本地拒绝均经 `error` 事件
+返回，方法本身立即返回 void：
+
+| code | 触发 | 宿主应对 |
+|------|------|---------|
+| `invalid_frame` | `selected_option` 与 `text` 同真或同假 | 修正载荷（服务端权威校验的本地前置，省一次往返） |
+| `not_connected` | 状态非 `online`（connecting / reconnecting / offline 或 ws 未就绪） | 重试时机由宿主决定（如等 `on("status")` 回 `online` 后重发）——重试策略属业务层，SDK 刻意不代劳 |
+
+服务端域级拒绝（`not_found` / `already_replied` / 白名单外 `invalid_frame`）经
+同一 `error` 事件透传且**连接保持不断开**。回复闭环最小示例：
+
+```ts
+const hub = new PushHub("https://pushhub.dyun.org", "<channelKey>");
+hub.on("message", (m) => {
+  // 渲染消息后，用户点击快捷选项即回复：
+  // hub.reply(m.wid, { selected_option: m.options?.[0] ?? "" }, "我的笔记本");
+});
+hub.on("answered", (a) => {
+  // 群内任何人处置了消息 a.wid —— 按 wid 幂等更新本地消息状态；
+  // a.answered_content 进 DOM 前必经 PushHub.renderMarkdown（同 message.text）
+});
+```
 
 ## 静态 PushHub.renderMarkdown(text)（D-19 / WEB-05 双形态）
 
@@ -108,9 +150,11 @@ demo 查看器把 Channel Key 明文存本机浏览器 `localStorage`（键 `pus
 
 ## 三端移植注意（Phase 5 Tauri / Phase 6 Android）
 
-- **事件 API 表面即接口契约**：四事件语义、status 枚举、error 载荷结构、
-  生命周期三方法的行为按本文移植；上表七组参数建议同值（去重窗口与翻页
-  上限直接影响零重复语义）
+- **事件 API 表面即接口契约**：五事件语义（04-03 answered 纯加法）、status
+  枚举、error 载荷结构、生命周期三方法与 `reply()` 的 fail-fast 语义按本文
+  移植；上表七组参数建议同值（去重窗口与翻页上限直接影响零重复语义）
+- `reply()` 在三端同构 fail-fast：非在线即本地 `not_connected` 拒绝，载荷
+  恰一性本地前置校验——不排队不重试（用户重试语义属宿主业务层，Pattern 7）
 - `connection-machine.ts` 是零平台依赖纯状态机（输入事件流 → 输出动作流，
   随机源/定时器全部注入）——Tauri 侧按同构方式对接 Rust 状态机
 - 渲染消毒模块可直接复用：`import { renderMarkdown } from
