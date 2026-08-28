@@ -50,6 +50,10 @@ const PONG_FRAME = '{"v":1,"type":"pong"}';
 // 经 X-PH-Verified 可信通道随内部请求到达，不外泄任何响应）。
 const SEND_KEY_HEADER = "X-PH-Send-Key";
 
+// Worker→DO 可信内部头：DO 代际校验用的 Channel Key 原值（WR-02；与
+// index.ts/admin.ts 同名同值约定——照 SEND_KEY_HEADER 同款本地声明）。
+const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
+
 // D-08 清理节奏：alarm 每日一次（保留窗口 DELETE + 限流桶清扫），数值可调
 // （reversible——清理逻辑不随数值变化）。DELETE 也计 SQLite 行写额度，
 // 一天一次批量足够（Pitfall 5：清理过频额度翻倍消耗）。
@@ -87,6 +91,19 @@ const CREATE_RATE_SENDS_DDL = `
     count        INTEGER NOT NULL
   )
 `;
+
+// ---- meta 表（WR-02 密钥代际）：单行键值（k/v），同步 SQL 读写——WS 升级
+// 路径保持零 await 纪律（Pitfall 9）。deleteAll 清库后由 purge 重建空表
+//（代际归零：频道已删，与「删除后 KV 缓存残留窗口」的文档化行为一致）。----
+const CREATE_META_DDL = `
+  CREATE TABLE IF NOT EXISTS meta (
+    k TEXT PRIMARY KEY,
+    v TEXT NOT NULL
+  )
+`;
+
+/** meta 表的密钥代际行键：值为最近一次重置后的当前 Channel Key。 */
+const META_KEY_GEN = "channel_key_gen";
 
 // ---- wid 生成（D-05）：前缀 + 长度引用 shared 常量（阈值单一来源），
 // URL-safe 字母表去易混淆字符，不引外部 ID 库。----
@@ -216,6 +233,7 @@ export class ChatRoom extends DurableObject {
     // 幂等 DDL：构造器在每次唤醒时重跑（休眠唤醒后实例状态清空）。
     ctx.storage.sql.exec(CREATE_MESSAGES_DDL);
     ctx.storage.sql.exec(CREATE_RATE_SENDS_DDL);
+    ctx.storage.sql.exec(CREATE_META_DDL);
     // auto-response 必须在构造器重设——休眠唤醒后不复活（Pitfall 3）。
     // 协议层 ping/pong 由运行时自动应答且不唤醒 DO（零计费零时长）。
     // WebSocketRequestResponsePair 是 workerd 运行时全局构造器（同 WebSocketPair），
@@ -236,13 +254,13 @@ export class ChatRoom extends DurableObject {
       return this.handlePublish(request);
     }
     if (url.pathname === "/ws" && request.headers.get("Upgrade") === "websocket") {
-      return this.handleWebSocketUpgrade();
+      return this.handleWebSocketUpgrade(request);
     }
     if (url.pathname === "/cleanup-rate" && request.method === "POST") {
       return this.handleCleanupRate(request);
     }
     if (url.pathname === "/kick-all" && request.method === "POST") {
-      return this.handleKickAll();
+      return this.handleKickAll(request);
     }
     if (url.pathname === "/purge" && request.method === "POST") {
       return this.handlePurge();
@@ -280,10 +298,26 @@ export class ChatRoom extends DurableObject {
    * close code 1008 = policy violation（连接因策略被终止，planner 裁定记入
    * 决策表）；reason 供 Phase 5/6 客户端展示细化。已死连接 close 抛错时
    * 忽略（publish 死连接清理同款容错）。web SDK 不区分 close code 一律
-   * 退避重连——踢连后的旧 Key 重挂防线由 Worker 侧编排顺序（KV 写先）
-   * 与 ≤60s 缓存窗口共同保证，不在本路由职责内。
+   * 退避重连——踢连后的旧 Key 重挂防线有三道：Worker 侧编排顺序（KV 写先
+   * DO 踢后）+ ≤60s 缓存窗口自然过期 + 本 DO 的代际校验（WR-02，见
+   * handleWebSocketUpgrade）。
    */
-  private handleKickAll(): Response {
+  private handleKickAll(request: Request): Response {
+    // WR-02 代际落盘：重置流程随 kick-all 携带新 Channel Key——先写代际再
+    // 踢连。被踢客户端（含 SDK 自动重连，退避首跳 <1s）在 ≤60s KV 缓存
+    // 窗口内以旧 ch: 值重连时，Worker 照常转发（KV 读命中缓存），但 DO 侧
+    // 代际比对不匹配即 401 拒绝——「窗口内重挂成功后长存」的缺口就此闭合
+    //（此前 KV 写先 DO 踢后的顺序红线只闭合了「60s 后仍可重挂」）。同步
+    // SQL 写（单行，零 await）；头缺失（内部契约演进的兼容窗口）只踢不落
+    // 代际，行为退回旧语义。
+    const newGen = request.headers.get(CHANNEL_KEY_HEADER);
+    if (newGen !== null) {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2",
+        META_KEY_GEN,
+        newGen,
+      );
+    }
     let kicked = 0;
     for (const ws of this.ctx.getWebSockets()) {
       try {
@@ -322,6 +356,19 @@ export class ChatRoom extends DurableObject {
     }
     await this.ctx.storage.deleteAll();
     await this.ctx.storage.deleteAlarm();
+    // WR-01：重建空表——deleteAll 清整库后驻留内存的 DO 不会重跑构造器
+    //（DDL 仅构造器执行），而 KV 侧 sk:/ch: 删除有 ≤60s 边缘缓存窗口：
+    // 窗口内残留的 publish/ws 流量（resolveSendKey/resolveChannelKey 命中
+    // 缓存、Worker 照常转发）会直接命中 "no such table" 未捕获异常 → 裸
+    // 500。重建（CREATE TABLE IF NOT EXISTS 幂等）后残留流量得到空频道
+    // 行为而非异常；缓存过期后恢复 Worker 层干净 401。
+    // 已知残留（文档化）：窗口内残留 publish 成功落库会重设 alarm——空 DO
+    // 每日唤醒一次（清理空表 no-op），额度影响可忽略。meta（代际）随
+    // deleteAll 清零且重建为空——删除后的频道无代际，残留窗口语义不变
+    //（WR-02 代际只闭合重置场景的重挂缺口）。
+    this.ctx.storage.sql.exec(CREATE_MESSAGES_DDL);
+    this.ctx.storage.sql.exec(CREATE_RATE_SENDS_DDL);
+    this.ctx.storage.sql.exec(CREATE_META_DDL);
     return new Response(JSON.stringify({ kicked }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
@@ -533,11 +580,26 @@ export class ChatRoom extends DurableObject {
   /**
    * WS 升级：acceptWebSocket（绝不调用标准 accept——烧时长额度，Anti-Pattern #1）。
    * 升级路径零 await、全部同步（SQLite 读即 .toArray() 收完，Pitfall 9）——
-   * accept 成功后立即推送首拉 history 帧（最近 INITIAL_FETCH 条，D-09），
-   * 帧在返回 101 前入队（DO 无 waitUntil——响应返回后浮空 Promise 不可靠，
-   * 同步入队是唯一可靠的首连推送点）。
+   * 首先是 WR-02 代际校验（同步 meta 读，见下），accept 成功后立即推送首拉
+   * history 帧（最近 INITIAL_FETCH 条，D-09），帧在返回 101 前入队（DO 无
+   * waitUntil——响应返回后浮空 Promise 不可靠，同步入队是唯一可靠的首连
+   * 推送点）。
    */
-  private handleWebSocketUpgrade(): Response {
+  private handleWebSocketUpgrade(request: Request): Response {
+    // WR-02 代际校验：meta 落盘的当前 Channel Key（最近一次 kick-all 携带）
+    // 与 Worker 转发头（ch: 解析值）不匹配即 401 拒绝——闭合「重置后 ≤60s
+    // 缓存窗口内旧 Key 重挂成功后长存」。未重置过的频道无代际（meta 空行）
+    // → 放行（Worker 层 KV 预检仍是第一道防线）；代际在而头缺失（部署
+    // 演进窗口的旧 Worker）同判不匹配——从严。
+    const genRow = this.ctx.storage.sql
+      .exec("SELECT v FROM meta WHERE k = ?1", META_KEY_GEN)
+      .toArray() as unknown as { v: string }[];
+    if (
+      genRow.length > 0 &&
+      genRow[0].v !== request.headers.get(CHANNEL_KEY_HEADER)
+    ) {
+      return errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
+    }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);

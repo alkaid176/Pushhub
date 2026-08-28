@@ -247,6 +247,20 @@ describe("GET /api/admin/channels 列表（D-12）", () => {
     expect(found!.name).toBe("legacy-smoke-channel");
     expect(found!.createdAt).toBe(createdAt);
   });
+
+  it("WR-05：损坏 id: 记录（缺 channelKey 字段）不进列表——详情面板不可达即不可崩", async () => {
+    // 半写损坏形态：无 channelKey 字段（手工种键/写中断）。带病出库会使
+    // renderDetail -> buildKeyRow(undefined) -> maskKey 的 key.slice 抛
+    // TypeError、整个详情面板渲染中断（每频道每次选中必现）。
+    const channelId = uniqueSuffix() + uniqueSuffix();
+    await env.KV.put(
+      `id:${channelId}`,
+      JSON.stringify({ name: "corrupt", createdAt: Date.now(), sendKeys: [] }),
+    );
+
+    const records = await listChannels(env);
+    expect(records.find((r) => r.channelId === channelId)).toBeUndefined();
+  });
 });
 
 describe("三级密钥权限隔离（KEY-01 双向断言）", () => {

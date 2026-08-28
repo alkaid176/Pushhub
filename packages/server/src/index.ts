@@ -27,6 +27,8 @@ const INTERNAL_ORIGIN = "https://do.pushhub.internal";
 const VERIFIED_HEADER = "X-PH-Verified";
 /** Worker→DO 可信内部头：限流分键（KEY-05）用的 Send Key 原值，不外泄响应。 */
 const SEND_KEY_HEADER = "X-PH-Send-Key";
+/** Worker→DO 可信内部头：DO 代际校验用的 Channel Key 原值（WR-02，不外泄响应）。 */
+const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
 
 /**
  * SC4 可观测标记（02-03 Task 3，Rule 3 偏差）：Worker 实际处理的响应一律带
@@ -94,39 +96,53 @@ async function handleWebSocket(request: Request, env: Env, channelKey: string): 
   // 复制原请求（保留 Upgrade 头）重写内部 URL，附加可信内部头。
   const forward = new Request(`${INTERNAL_ORIGIN}/ws`, request);
   forward.headers.set(VERIFIED_HEADER, "1");
+  // WR-02：随转发携带 KV 解析出的 channelKey 本值（覆盖客户端可能透传的
+  // 同名头——值取自 ch: 查询结果而非客户端输入，伪造不可能）。DO 侧与
+  // kick-all 落盘的代际比对：重置后旧 Key 在 ≤60s KV 缓存窗口内重挂在此
+  // 被拒（401 信封），窗口彻底闭合。
+  forward.headers.set(CHANNEL_KEY_HEADER, channelKey);
   return env.CHANNELS.getByName(info.channelId).fetch(forward);
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const pathname = url.pathname;
-
     let response: Response;
-    // Admin API（D-12/D-13）：前缀分发，鉴权在 admin.ts 内完成。
-    if (pathname.startsWith("/api/admin/")) {
-      response = await handleAdminApi(request, env);
-    } else if (pathname === "/api/send" && request.method === "POST") {
-      response = await handleSend(request, env);
-    } else {
-      const wsMatch = /^\/api\/ws\/([^/]+)$/.exec(pathname);
-      if (wsMatch !== null && request.method === "GET") {
-        // 畸形编码（非法 % 序列）与 KV miss 同路径处理：401 信封（Flagged Assumption SRV-03）。
-        let channelKey: string;
-        try {
-          channelKey = decodeURIComponent(wsMatch[1]);
-        } catch {
-          response = INVALID_KEY();
-          return stampMarker(response);
-        }
-        response = await handleWebSocket(request, env, channelKey);
-      } else {
-        response = errorEnvelope(404, "not_found", "The requested resource was not found.");
-      }
+    try {
+      response = await routeRequest(request, env);
+    } catch {
+      // WR-04：入口兜底——任何穿透业务处理器的意外异常统一 D-06 500 信封
+      //（与 admin.ts handleAdminApi 同款；不泄漏内部细节，D-13 最小信息量）。
+      response = errorEnvelope(500, "server_error", "Internal server error.");
     }
     return stampMarker(response);
   },
 };
+
+/** 路由分发本体（原 fetch 主体，由 WR-04 兜底层包裹）。 */
+async function routeRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+
+  // Admin API（D-12/D-13）：前缀分发，鉴权在 admin.ts 内完成。
+  if (pathname.startsWith("/api/admin/")) {
+    return handleAdminApi(request, env);
+  }
+  if (pathname === "/api/send" && request.method === "POST") {
+    return handleSend(request, env);
+  }
+  const wsMatch = /^\/api\/ws\/([^/]+)$/.exec(pathname);
+  if (wsMatch !== null && request.method === "GET") {
+    // 畸形编码（非法 % 序列）与 KV miss 同路径处理：401 信封（Flagged Assumption SRV-03）。
+    let channelKey: string;
+    try {
+      channelKey = decodeURIComponent(wsMatch[1]);
+    } catch {
+      return INVALID_KEY();
+    }
+    return handleWebSocket(request, env, channelKey);
+  }
+  return errorEnvelope(404, "not_found", "The requested resource was not found.");
+}
 
 /** SC4 标记盖章：复制构造新 Response（DO 子请求响应的头不可变，原地 set 会抛
  * TypeError）；跳过 101 升级响应（WS 握手不参与资产对照）。 */

@@ -81,7 +81,9 @@ function directPublish(stub: DurableObjectStub, text: string, sendKey: string): 
 }
 
 describe("retention alarm (D-08)", () => {
-  it("600 条 → alarm 清至 500（oldest=101）→ 幂等 → seq=601 单调 → 桶清扫 → 重设 24h", async () => {
+  // 600 次 directPublish + alarm 全链：本机负载敏感（曾实测 5s 默认超时在
+  // 机器繁忙时踩线），显式放宽到 30s——断言语义不变，只放宽时间预算。
+  it("600 条 → alarm 清至 500（oldest=101）→ 幂等 → seq=601 单调 → 桶清扫 → 重设 24h", { timeout: 30_000 }, async () => {
     const channelId = uniqueId().slice(0, 16);
     const stub = env.CHANNELS.get(env.CHANNELS.idFromName(channelId));
 
