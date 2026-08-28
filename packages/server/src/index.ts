@@ -29,6 +29,11 @@ const VERIFIED_HEADER = "X-PH-Verified";
 const SEND_KEY_HEADER = "X-PH-Send-Key";
 /** Worker→DO 可信内部头：DO 代际校验用的 Channel Key 原值（WR-02，不外泄响应）。 */
 const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
+/** Worker→DO 可信内部头：每频道 signing secret（04-02 D-47——ch: 记录已解析，
+ * 零额外 KV 读；DO 侧落 meta 表供回调签名，不外泄响应）。 */
+const SIGNING_SECRET_HEADER = "X-PH-Signing-Secret";
+/** Worker→DO 可信内部头：频道 ID（04-02 D-49 回调 body 的 channel_id 数据源）。 */
+const CHANNEL_ID_HEADER = "X-PH-Channel-Id";
 
 /**
  * SC4 可观测标记（02-03 Task 3，Rule 3 偏差）：Worker 实际处理的响应一律带
@@ -101,6 +106,16 @@ async function handleWebSocket(request: Request, env: Env, channelKey: string): 
   // kick-all 落盘的代际比对：重置后旧 Key 在 ≤60s KV 缓存窗口内重挂在此
   // 被拒（401 信封），窗口彻底闭合。
   forward.headers.set(CHANNEL_KEY_HEADER, channelKey);
+  // 04-02 D-47（RESEARCH Pattern 5）：随转发携带 ch: 解析出的 signingSecret
+  // 与 channelId——DO 侧 /ws 升级路径落 meta 表。零额外 KV 读（info 已在手）；
+  // 旧格式频道无 signingSecret（undefined）时不设头，DO 侧 meta 缺行即
+  // "no signing secret" 失败可查路径（Pitfall 8，04-02 Task 3）。
+  // 正确性论证：回调仅在回复后发生、回复必经已鉴权 WS、该连接升级时 secret
+  // 已落 meta——secret 永远先于任何回调就位。
+  forward.headers.set(CHANNEL_ID_HEADER, info.channelId);
+  if (typeof info.signingSecret === "string" && info.signingSecret !== "") {
+    forward.headers.set(SIGNING_SECRET_HEADER, info.signingSecret);
+  }
   return env.CHANNELS.getByName(info.channelId).fetch(forward);
 }
 

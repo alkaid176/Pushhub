@@ -60,6 +60,12 @@ const SEND_KEY_HEADER = "X-PH-Send-Key";
 // index.ts/admin.ts 同名同值约定——照 SEND_KEY_HEADER 同款本地声明）。
 const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
 
+// Worker→DO 可信内部头（04-02 D-47/D-49）：signing secret 原值与频道 ID——
+// /ws 升级路径与 /set-signing-secret 内部路由共用同一落盘辅助（与
+// index.ts/admin.ts 同名同值约定；经 X-PH-Verified 可信通道到达，不外泄）。
+const SIGNING_SECRET_HEADER = "X-PH-Signing-Secret";
+const CHANNEL_ID_HEADER = "X-PH-Channel-Id";
+
 // D-08 清理节奏：alarm 每日一次（保留窗口 DELETE + 限流桶清扫），数值可调
 // （reversible——清理逻辑不随数值变化）。DELETE 也计 SQLite 行写额度，
 // 一天一次批量足够（Pitfall 5：清理过频额度翻倍消耗）。
@@ -110,6 +116,11 @@ const CREATE_META_DDL = `
 
 /** meta 表的密钥代际行键：值为最近一次重置后的当前 Channel Key。 */
 const META_KEY_GEN = "channel_key_gen";
+
+/** meta 表行键（04-02）：signing secret（回调 HMAC 签名密钥）与频道 ID
+ * （D-49 回调 body 的 channel_id 数据源）——/ws 升级时随内部头落盘。 */
+const META_KEY_SIGNING_SECRET = "signing_secret";
+const META_KEY_CHANNEL_ID = "channel_id";
 
 // ---- wid 生成（D-05）：前缀 + 长度引用 shared 常量（阈值单一来源），
 // URL-safe 字母表去易混淆字符，不引外部 ID 库。----
@@ -276,6 +287,9 @@ export class ChatRoom extends DurableObject {
     if (url.pathname === "/kick-all" && request.method === "POST") {
       return this.handleKickAll(request);
     }
+    if (url.pathname === "/set-signing-secret" && request.method === "POST") {
+      return this.handleSetSigningSecret(request);
+    }
     if (url.pathname === "/purge" && request.method === "POST") {
       return this.handlePurge();
     }
@@ -345,6 +359,49 @@ export class ChatRoom extends DurableObject {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
+  }
+
+  /**
+   * signing secret 重置联动（04-02，D-47）：admin reset 端点 KV 写先、本路由
+   * 转发后——把新 secret 与 channelId 落 meta 表（照 kick-all 代际落盘同款，
+   * INSERT ON CONFLICT 覆盖式更新）。X-PH-Signing-Secret 缺失即内部契约违例
+   * ——照 handleCleanupRate 同款 401。同步 SQL 写零 await；转发失败由调用方
+   * try/catch 吞掉（尽力语义：下次 /ws 连接以 KV 权威值重写 meta 自然收敛）。
+   */
+  private handleSetSigningSecret(request: Request): Response {
+    if (request.headers.get(SIGNING_SECRET_HEADER) === null) {
+      return errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
+    }
+    this.writeChannelMeta(request);
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  }
+
+  /**
+   * 频道级 meta 落盘（04-02）：/ws 升级与 /set-signing-secret 共用——把转发
+   * 头携带的 signing secret 与 channelId 写入 meta 表（头缺失时不写——旧
+   * 格式频道在补发前 meta 无 secret 行，回调链走 "no signing secret" 失败
+   * 可查路径，Pitfall 8）。同步 SQL（零 await，Pitfall 9）。
+   */
+  private writeChannelMeta(request: Request): void {
+    const secret = request.headers.get(SIGNING_SECRET_HEADER);
+    if (secret !== null) {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2",
+        META_KEY_SIGNING_SECRET,
+        secret,
+      );
+    }
+    const channelId = request.headers.get(CHANNEL_ID_HEADER);
+    if (channelId !== null) {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2",
+        META_KEY_CHANNEL_ID,
+        channelId,
+      );
+    }
   }
 
   /**
@@ -614,6 +671,9 @@ export class ChatRoom extends DurableObject {
     ) {
       return errorEnvelope(401, "invalid_key", "Missing or invalid credentials.");
     }
+    // 04-02 D-47：频道级 meta 落盘（signing_secret / channel_id）——Worker /ws
+    // 转发头携带的 KV 权威值。同步 SQL 零 await（升级路径纪律不变，Pitfall 9）。
+    this.writeChannelMeta(request);
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);

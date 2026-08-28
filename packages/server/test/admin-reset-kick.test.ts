@@ -390,6 +390,24 @@ describe("signing-secret 生命周期（04-02 D-47 / KEY-04）", () => {
     expect(stored!.name).toBe(channel.name);
   });
 
+  it("KEY-04 分级隔离：reset-channel-key 不动 signingSecret（reveal 值保持创建值）", async () => {
+    const channel = await createChannelViaApi(`ss-isolate-${uniqueSuffix()}`);
+    const reset = await adminRequest(
+      "POST",
+      `/api/admin/channels/${channel.channelId}/reset-channel-key`,
+    );
+    expect(reset.status).toBe(201);
+    // ch: 已换代（新 Channel Key）但 signingSecret 原值保留——重置 Channel Key
+    // 与重置 signing secret 互不影响（KEY-04：任一级泄露可单独重置）。
+    const reveal = await adminRequest(
+      "GET",
+      `/api/admin/channels/${channel.channelId}/signing-secret`,
+    );
+    expect(reveal.status).toBe(200);
+    const body = (await reveal.json()) as { signingSecret: string };
+    expect(body.signingSecret).toBe(channel.signingSecret);
+  });
+
   it("转发落 meta：WS 连接（经 Worker 入口）后 meta.signing_secret == KV 当前值（含 reset 后换新）", async () => {
     const channel = await createChannelViaApi(`ss-meta-${uniqueSuffix()}`);
     const stub = env.CHANNELS.get(env.CHANNELS.idFromName(channel.channelId));

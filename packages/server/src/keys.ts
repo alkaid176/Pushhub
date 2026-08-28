@@ -1,8 +1,8 @@
 /**
  * KV 密钥读写路径封装（Pattern 6）。
  *
- * KV 键表（三前缀，写路径唯一入口 createChannel——01-05；03-01 id:/sk: 值结构演进 D-30/D-35）：
- *   ch:<channel_key> -> {channelId, name, createdAt}
+ * KV 键表（三前缀，写路径唯一入口 createChannel——01-05；03-01 id:/sk: 值结构演进 D-30/D-35；04-02 ch: 增 signingSecret 可选字段 D-47）：
+ *   ch:<channel_key> -> {channelId, name, createdAt, signingSecret?}
  *   sk:<send_key>    -> {channelId, label?, createdAt?}（label/createdAt 纯增量可选字段，旧值天然合法）
  *   id:<channelId>   -> {channelKey, name, createdAt}（频道级反向索引，供 admin 列表/重置/删除）
  *
@@ -36,11 +36,19 @@ export interface SendKeyInfo {
   createdAt?: number;
 }
 
-/** ch:<key> 命中后的值结构。 */
+/**
+ * ch:<key> 命中后的值结构。
+ *
+ * signingSecret 是 Phase 4 新增可选字段（D-47——照 SendKeyInfo.label 增量
+ * 可选字段先例：旧值无此键天然合法）。生产 0.1.12 前遗留频道经 reveal 端点
+ * migrate-on-touch 惰性补发（readOrProvisionSigningSecret），不写迁移脚本。
+ */
 export interface ChannelKeyInfo {
   channelId: string;
   name: string;
   createdAt: number;
+  /** 每频道回调签名密钥（phsig_ + 32 字符）；旧格式记录无此键 = undefined。 */
+  signingSecret?: string;
 }
 
 /** 解析 Send Key -> 频道归属；miss 返回 null（调用方据此在 Worker 层即拒绝，不创建 DO stub）。 */
@@ -78,6 +86,8 @@ const BASE62_USABLE_BYTES = 248;
 
 export const CHANNEL_KEY_PREFIX = "phc_";
 export const SEND_KEY_PREFIX = "phs_";
+/** signing secret 前缀（D-47）：与 phc_/phs_ 三前缀区分，肉眼可辨凭据级。 */
+export const SIGNING_SECRET_PREFIX = "phsig_";
 export const KEY_LENGTH = 32;
 export const CHANNEL_ID_LENGTH = 16;
 
@@ -108,6 +118,15 @@ export function generateSendKey(): string {
   return SEND_KEY_PREFIX + generateRandomString(KEY_LENGTH);
 }
 
+/**
+ * signing secret（D-47，04-02）：phsig_ + 32 字符（对齐 generateSendKey 模式，
+ * 拒绝采样 base62 ≈ 190 bit 熵——HMAC-SHA256 密钥强度充裕）。与 Send Key
+ * 权限分离：泄露不互伤（KEY-06 前提），可独立重置（KEY-04 分级隔离语义）。
+ */
+export function generateSigningSecret(): string {
+  return SIGNING_SECRET_PREFIX + generateRandomString(KEY_LENGTH);
+}
+
 /** channelId：16 字符（getByName 吃任意字符串名，短名无碍）。 */
 export function generateChannelId(): string {
   return generateRandomString(CHANNEL_ID_LENGTH);
@@ -131,8 +150,14 @@ export interface ChannelRecord {
   createdAt: number;
 }
 
-/** 建频道返回的三件套（含 name/createdAt，即 201 响应体）。 */
-export interface CreatedChannel extends ChannelRecord {}
+/**
+ * 建频道返回的四件套（含 name/createdAt，即 201 响应体）。signingSecret 随
+ * 创建一并下发（D-47 沿用 201 唯一完整返回点先例 D-13/D-35——此后只能经
+ * reveal/reset 端点取回）。
+ */
+export interface CreatedChannel extends ChannelRecord {
+  signingSecret: string;
+}
 
 /**
  * id: 值的存储形态（CR-01 起新写恒为频道级三字段；sendKeys 数组仅存在于
@@ -212,12 +237,13 @@ export async function createChannel(env: Env, name: string): Promise<CreatedChan
   const channelId = generateChannelId();
   const channelKey = generateChannelKey();
   const sendKey = generateSendKey();
+  const signingSecret = generateSigningSecret();
   const createdAt = Date.now();
   const sendKeys: SendKeyRecord[] = [{ key: sendKey, label: null, createdAt }];
 
   await env.KV.put(
     KEY_PREFIX_CH + channelKey,
-    JSON.stringify({ channelId, name, createdAt }),
+    JSON.stringify({ channelId, name, createdAt, signingSecret }),
   );
   // sk: 恒写新格式（含 label/createdAt 键，D-30 + CR-01 per-key 权威元数据）：
   // 旧读代码无此键不破坏，新读代码可显示标签与创建时间。
@@ -231,7 +257,7 @@ export async function createChannel(env: Env, name: string): Promise<CreatedChan
     JSON.stringify({ channelKey, name, createdAt }),
   );
 
-  return { channelId, channelKey, sendKeys, name, createdAt };
+  return { channelId, channelKey, sendKeys, name, createdAt, signingSecret };
 }
 
 /**
@@ -463,6 +489,16 @@ export async function resetChannelKey(
   if (stored === null) {
     return null;
   }
+  // KEY-04 密钥分级隔离（04-02）：Channel Key 重置不动 signingSecret——删除旧
+  // ch: 前先读出该字段带入新值（旧格式记录无此键则新值同样不写，补发留给
+  // reveal 端点的 migrate-on-touch 路径）。
+  const oldCh = await env.KV.get<ChannelKeyInfo>(KEY_PREFIX_CH + stored.channelKey, {
+    type: "json",
+  });
+  const preservedSecret =
+    oldCh !== null && typeof oldCh.signingSecret === "string"
+      ? { signingSecret: oldCh.signingSecret }
+      : {};
   const channelKey = generateChannelKey();
   await env.KV.delete(KEY_PREFIX_CH + stored.channelKey);
   await env.KV.put(
@@ -471,6 +507,7 @@ export async function resetChannelKey(
       channelId,
       name: stored.name,
       createdAt: stored.createdAt,
+      ...preservedSecret,
     }),
   );
   await env.KV.put(
@@ -509,4 +546,79 @@ export async function deleteChannelKeys(
     await env.KV.delete(KEY_PREFIX_SEND + key);
   }
   await env.KV.delete(KEY_PREFIX_ID + record.channelId);
+}
+
+// ---------------------------------------------------------------------------
+// 写路径四（04-02，D-47/KEY-06）：signing secret 查/重置
+// ---------------------------------------------------------------------------
+
+/** reveal/reset 的公共读点结果（migrated 供测试与观测区分补发路径）。 */
+export interface SigningSecretRead {
+  /** ch: 记录当前 Channel Key（migrate 补写整值重写需携带原值）。 */
+  channelKey: string;
+  secret: string;
+  /** true = 本调用是 migrate-on-touch 惰性补发（旧格式记录 + KV 写回）。 */
+  migrated: boolean;
+}
+
+/**
+ * 读 signing secret；缺省时 migrate-on-touch 惰性补发（D-47，normalizeIdRecord
+ * 同款哲学——不写迁移脚本，被触碰的旧记录自然升级）。
+ *
+ * 定位链：id:（channelId -> channelKey）→ ch:（signingSecret）。miss 返回
+ * null（上游 404）。补发是 admin 频率操作（KV 同 key 1 写/秒限制远不触及）。
+ * 生产 0.1.12 前遗留频道（约 10 个）在补发前回调链照常失败可查（Pitfall 8
+ * 语义，04-02 Task 3），首次 reveal 即修复。
+ */
+export async function readOrProvisionSigningSecret(
+  env: Env,
+  channelId: string,
+): Promise<SigningSecretRead | null> {
+  const stored = await readIdRecord(env, channelId);
+  if (stored === null) {
+    return null;
+  }
+  const ch = await env.KV.get<ChannelKeyInfo>(KEY_PREFIX_CH + stored.channelKey, {
+    type: "json",
+  });
+  if (ch === null) {
+    // id: 在而 ch: 缺席 = 键空间不一致（半删/损坏）——与频道不存在同 404。
+    return null;
+  }
+  if (typeof ch.signingSecret === "string" && ch.signingSecret !== "") {
+    return { channelKey: stored.channelKey, secret: ch.signingSecret, migrated: false };
+  }
+  const secret = generateSigningSecret();
+  await env.KV.put(
+    KEY_PREFIX_CH + stored.channelKey,
+    JSON.stringify({ ...ch, signingSecret: secret }),
+  );
+  return { channelKey: stored.channelKey, secret, migrated: true };
+}
+
+/**
+ * 重置 signing secret（KEY-04/T-04-09：独立轮换，Channel Key 与 Send Key
+ * 均不动）：读旧 ch: 记录 → 生成新 secret → 整值重写（其余字段原样）。
+ * 返回新 secret（调用方转发 DO 更新 meta 后完整返回——密钥唯一完整返回点）。
+ */
+export async function resetSigningSecret(
+  env: Env,
+  channelId: string,
+): Promise<string | null> {
+  const stored = await readIdRecord(env, channelId);
+  if (stored === null) {
+    return null;
+  }
+  const ch = await env.KV.get<ChannelKeyInfo>(KEY_PREFIX_CH + stored.channelKey, {
+    type: "json",
+  });
+  if (ch === null) {
+    return null;
+  }
+  const secret = generateSigningSecret();
+  await env.KV.put(
+    KEY_PREFIX_CH + stored.channelKey,
+    JSON.stringify({ ...ch, signingSecret: secret }),
+  );
+  return secret;
 }

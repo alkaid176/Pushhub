@@ -209,7 +209,12 @@ describe("GET /api/admin/channels 列表（D-12）", () => {
     const body = (await resp.json()) as { channels: CreatedChannel[] };
     const found = body.channels.find((c) => c.channelId === channel.channelId);
     expect(found).toBeDefined();
-    expect(found).toEqual(channel);
+    // 04-02（Rule 3 联动）：create 响应新增 signingSecret（D-47 201 唯一完整
+    // 返回点先例）；列表视图有意不枚举该字段（secret 只经 reveal/reset 端点
+    // 取回）——整值比对改为剔除该字段后的共享字段集，并显式断言列表项不含
+    // secret（防泄漏回归）。
+    expect(found).toEqual({ ...channel, signingSecret: undefined });
+    expect("signingSecret" in (found as object)).toBe(false);
   });
 
   it("游标分页：pageSize=1 时跨多页拉全不漏", async () => {

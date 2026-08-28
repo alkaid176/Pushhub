@@ -8,6 +8,8 @@
  *   POST /api/admin/channels/:channelId/send-keys       建 Send Key -> 201 {key, label, createdAt}（03-02，D-30/D-31）
  *   DELETE /api/admin/channels/:channelId/send-keys/:key 吊销 -> 204（03-02，D-32）
  *   POST /api/admin/channels/:channelId/reset-channel-key 重置 Channel Key -> 201 {channelKey}（03-03，D-33——KV 写先 DO 踢后）
+ *   GET  /api/admin/channels/:channelId/signing-secret   查 signing secret -> 200 {signingSecret}（04-02，D-47——旧格式记录 migrate-on-touch 惰性补发）
+ *   POST /api/admin/channels/:channelId/signing-secret   重置 signing secret -> 201 {signingSecret}（04-02，D-47/T-04-09——独立轮换，KV 写先 DO meta 更新后）
  *   DELETE /api/admin/channels/:channelId               删除频道 -> 204（03-03，D-34——DO purge 先 KV 键删后，one-way）
  *   GET  /api/admin/channels/:channelId/messages?before=&limit= 消息历史 -> 200 {messages, has_more, oldest_kept_seq}（03-04，D-36——X-PH-Verified 转发 DO /history）
  *
@@ -30,7 +32,9 @@ import {
   deleteChannelKeys,
   listChannels,
   readChannelRecord,
+  readOrProvisionSigningSecret,
   resetChannelKey,
+  resetSigningSecret,
   resolveSendKey,
   revokeSendKeyRecord,
   SEND_KEY_LIMIT,
@@ -51,7 +55,7 @@ const CHANNEL_ID_RE = /^[0-9A-Za-z]{16}$/;
  * sub 白名单限定本阶段已知资源段；其余子路径（含尾段乱形）落入占位 404。
  */
 const CHANNELS_PATH_RE =
-  /^\/api\/admin\/channels\/([^/]+)(?:\/(send-keys|reset-channel-key|messages))?(?:\/(.+))?$/;
+  /^\/api\/admin\/channels\/([^/]+)(?:\/(send-keys|reset-channel-key|messages|signing-secret))?(?:\/(.+))?$/;
 
 // Worker→DO 内部转发常量（与 index.ts 同名同值约定——该文件不导出，照
 // chat-room.ts SEND_KEY_HEADER 同款本地声明）。
@@ -60,6 +64,10 @@ const VERIFIED_HEADER = "X-PH-Verified";
 const SEND_KEY_HEADER = "X-PH-Send-Key";
 /** DO 代际校验用的 Channel Key 原值（WR-02；chat-room.ts 同名同值约定）。 */
 const CHANNEL_KEY_HEADER = "X-PH-Channel-Key";
+/** Worker→DO 可信内部头：signing secret 原值（04-02 D-47；index.ts/chat-room.ts 同名同值约定）。 */
+const SIGNING_SECRET_HEADER = "X-PH-Signing-Secret";
+/** Worker→DO 可信内部头：频道 ID（04-02 D-49 回调 body 的 channel_id 数据源）。 */
+const CHANNEL_ID_HEADER = "X-PH-Channel-Id";
 
 /** 未知 admin 路径/方法与"不存在"统一信封（不扩 D-06 错误码面；T-03-07 防探测）。 */
 const NOT_FOUND = () =>
@@ -186,6 +194,12 @@ async function routeAdminApi(request: Request, env: Env): Promise<Response> {
   if (sub === "reset-channel-key" && tail === undefined && request.method === "POST") {
     return handleResetChannelKey(env, channelId);
   }
+  if (sub === "signing-secret" && tail === undefined && request.method === "GET") {
+    return handleRevealSigningSecret(env, channelId);
+  }
+  if (sub === "signing-secret" && tail === undefined && request.method === "POST") {
+    return handleResetSigningSecret(env, channelId);
+  }
   if (sub === undefined && tail === undefined && request.method === "DELETE") {
     return handleDeleteChannel(env, channelId);
   }
@@ -231,6 +245,62 @@ async function handleResetChannelKey(
     // 见函数头注释：踢连尽力语义，不阻断 201。
   }
   return new Response(JSON.stringify({ channelKey: record.channelKey }), {
+    status: 201,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+/**
+ * GET /api/admin/channels/:channelId/signing-secret（04-02，D-47）：reveal。
+ * 读 ch: 记录（id: -> channelKey 定位链在 keys.ts）；signingSecret 缺省时
+ * migrate-on-touch 惰性补发（生成 + KV 补写后返回——0.1.12 前遗留频道的零
+ * 迁移演进路径）。API 返回完整值给 Admin Key 持有者（D-13 两段式常时比较
+ * 前置鉴权已覆盖本分支；掩码显示是前端层职责，本期无 UI——Q1 裁决）。
+ */
+async function handleRevealSigningSecret(
+  env: Env,
+  channelId: string,
+): Promise<Response> {
+  const result = await readOrProvisionSigningSecret(env, channelId);
+  if (result === null) {
+    return NOT_FOUND();
+  }
+  return new Response(JSON.stringify({ signingSecret: result.secret }), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+/**
+ * POST /api/admin/channels/:channelId/signing-secret（04-02，D-47/T-04-09）：
+ * 独立轮换 signing secret（Channel Key / Send Key 均不动——KEY-04 分级隔离）。
+ * 顺序照 handleResetChannelKey 结构：KV 写先（keys.ts resetSigningSecret 整值
+ * 重写 ch:）→ DO POST /set-signing-secret 转发后（尽力更新 meta，try/catch
+ * 吞转发失败——下次 /ws 连接会以 KV 权威值重写 meta，窗口自然收敛）→ 201
+ * 返回完整新 secret（密钥唯一完整返回点先例延续）。
+ */
+async function handleResetSigningSecret(
+  env: Env,
+  channelId: string,
+): Promise<Response> {
+  const secret = await resetSigningSecret(env, channelId);
+  if (secret === null) {
+    return NOT_FOUND();
+  }
+  try {
+    const forward = new Request(`${INTERNAL_ORIGIN}/set-signing-secret`, {
+      method: "POST",
+      headers: {
+        [VERIFIED_HEADER]: "1",
+        [SIGNING_SECRET_HEADER]: secret,
+        [CHANNEL_ID_HEADER]: channelId,
+      },
+    });
+    await env.CHANNELS.getByName(channelId).fetch(forward);
+  } catch {
+    // 见函数头注释：meta 更新尽力语义，不阻断 201。
+  }
+  return new Response(JSON.stringify({ signingSecret: secret }), {
     status: 201,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
