@@ -737,6 +737,18 @@
   }
 
   /**
+   * WR-03 迟到响应守卫的对象同一性判定：回调闭包持有的 state 与当前
+   * 全局 historyState 不是同一对象即视为过期——覆盖「切走再切回」场景
+   * （channelId 相同但 state 已被 resetHistoryState 重建，仅比对
+   * channelId 判不出）。buildHistoryBlock 的 toggle/click 闭包同样改经
+   * 此判定取最新 state，杜绝「按钮可见但点击写入过期闭包 state」的
+   * 静默无操作。
+   */
+  function isStaleHistoryState(state) {
+    return state !== historyState;
+  }
+
+  /**
    * 单条历史消息渲染（倒序即 API 返回序，最新在最上——直接 appendChild）：
    * 头部 = #seq（mono）+ 时间（mono graytext）+ title（如有则 strong
    * textContent；无 title 不渲染标题行——viewer appendMessage 同款）+
@@ -843,15 +855,25 @@
     details.appendChild(more);
 
     details.addEventListener("toggle", function () {
-      if (details.open && !state.loaded && !state.loading) {
+      // WR-03：经 isStaleHistoryState 取最新 state（频道切走再切回后，
+      // 闭包持有的 state 已过期——同一 channelId 但对象已重建）。
+      var current = isStaleHistoryState(state)
+        ? ensureHistoryState(ch.channelId)
+        : state;
+      if (details.open && !current.loaded && !current.loading) {
         loadHistory(ch.channelId, null);
       }
     });
     more.addEventListener("click", function () {
-      if (state.loading) return;
+      // WR-03：同上——重取最新 state，写入过期闭包的翻页请求点击后
+      // 静默无操作。
+      var current = isStaleHistoryState(state)
+        ? ensureHistoryState(ch.channelId)
+        : state;
+      if (current.loading) return;
       var minSeq = null;
-      for (var i = 0; i < state.messages.length; i++) {
-        var s = state.messages[i].seq;
+      for (var i = 0; i < current.messages.length; i++) {
+        var s = current.messages[i].seq;
         if (typeof s === "number" && (minSeq === null || s < minSeq)) {
           minSeq = s;
         }
@@ -919,8 +941,9 @@
           r.json &&
           Array.isArray(r.json.messages)
         ) {
-          // 频道已切换：迟到响应丢弃。
-          if (historyState === null || historyState.channelId !== channelId) {
+          // 频道已切换或 state 已重建（切走再切回，WR-03 对象同一性）：
+          // 迟到响应一律丢弃。
+          if (isStaleHistoryState(state)) {
             return;
           }
           state.loaded = true;
