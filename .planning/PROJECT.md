@@ -18,10 +18,10 @@ Webhook 发送方发出的消息，配置了同一通知密钥的所有客户端
 - ✓ 群聊：多个客户端配置同一 Channel Key，消息互通、成员可见 — Phase 1
 - ✓ 分级密钥体系：Admin/Send/Channel 三级隔离，双向不可通用 — Phase 1
 - ✓ 服务端运行在 Cloudflare Worker 免费额度上（Hibernation 生产验证：空闲 DO duration 平直不增长）— Phase 1
+- ✓ 服务端管理页：创建/删除/重置通知密钥（=频道/群）— Phase 3（生产 0.1.12，用户 UAT 通过）
 
 ### Active
 
-- [ ] 服务端管理页：创建/删除/重置通知密钥（=频道/群）
 - [ ] 双向通信：客户端可回复消息（快捷选项由发送方随消息提供，或自定义输入，Markdown 格式）
 - [ ] 回调送达：有人回复时，服务端自动把回复 POST 回发送方提供的 callback_url
 - [ ] Windows 桌面客户端（Tauri 2）：系统托盘常驻 + Windows 原生通知 + 消息窗口 + 回复
@@ -72,6 +72,9 @@ Webhook 发送方发出的消息，配置了同一通知密钥的所有客户端
 | Web SDK 渲染消毒用 marked + DOMPurify（FORBID_TAGS + FORBID_ATTR 双层收敛） | 消息来自任意 Webhook 发送方；标签与属性双层禁用才真正收敛 UI 伪装攻击面（CR-01 教训：只禁标签时 style/class 属性穿透） | ✓ Phase 2 生产实证：15 条攻击样本 fixture + 生产字节 jsdom 直测全过（0.1.10） |
 | SDK 构建产物缓存参数 ?v= 由 build.mjs 构建期注入根版本号 | 人工同步纪律在 0.1.8 已实际脱钩（0.1.7 残留）；机制注入 + 恒一致断言双保险 | ✓ Phase 2 生产实证：0.1.9/0.1.10 连续两次部署 ?v= 恰一处与根 version 一致 |
 | SDK 连接状态机纯逻辑抽取（零平台 API）+ 构造容错 setTimeout(0) 延迟派发 | 状态机可被 Tauri/Android 复用；构造即连时序下同步 emitError 会在宿主 on() 注册前丢失（G-02-4 WR-04 根因） | ✓ Phase 2：畸形 serverUrl E2E 呈现 error 态不卡连接中（真浏览器） |
+| Send Key 每键独立 sk: KV 记录为权威源（id: 降级频道级低频写） | CR-01 教训：id: 整条读-改-写在 KV 最终一致 + 60s 缓存下有丢写竞态（新建 Key 静默不可见/吊销复活）；单键删除天然无竞态 | ✓ Phase 3 生产实证：0.1.12 上线，sk: 现扫 + id: 并集路径生产首跑全绿 |
+| 重置踢连三道防线：KV 写先 DO 踢后 + 60s 缓存自然过期 + DO meta 代际校验 | 单靠编排顺序只闭合「60s 后重挂」；窗口内旧 Key 重挂需 DO 侧代际比对 401 兜底（W-1 教训：机制写了但没接线 = 死代码，需回归测试覆盖转发头） | ✓ Phase 3 生产实证：旧代际 DO 直连 401 / 新代际 101（0.1.12） |
+| schema 演进走 normalize 兼容层而非迁移脚本 | KV 存量频道零破坏迁移（migrate-on-write）；迁移脚本在最终一致存储上反而引入窗口 | ✓ Phase 3 生产实证：10 个旧格式频道全部兼容列出（0.1.11 normalize 首跑） |
 
 ## Evolution
 
@@ -91,4 +94,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-27 after Phase 02 completion (gap closure + CR-01)
+*Last updated: 2026-08-28 after Phase 03 completion (管理页 + 密钥生命周期 + code review 六修复 + W-1 接线)

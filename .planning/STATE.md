@@ -20,10 +20,10 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-26)
+See: .planning/PROJECT.md (updated 2026-08-28)
 
 **Core value:** Webhook 发送方发出的消息，配置了同一通知密钥的所有客户端能实时收到并回复，发送方能实时收到回复——这条链路必须稳定可靠。
-**Current focus:** Phase 03 — 管理页与密钥生命周期
+**Current focus:** Phase 04 — 回复链与回调送达
 
 ## Current Position
 
@@ -32,7 +32,7 @@ Plan: Not started
 Status: Ready to plan
 Last activity: 2026-08-28 — Phase 03 complete, transitioned to Phase 4
 
-Progress: [███░░░░░░░] 33%
+Progress: [████████████████████] 100%
 
 ## Performance Metrics
 
@@ -116,6 +116,8 @@ Recent decisions affecting current work:
 - [Phase 03]: [Phase 03] 03-05 阶段收口：生产 0.1.11（Version 05b89819）管理页上线 + SC4 双证据闭环（标记头对照 + dashboard 人工计数）+ D-41 journey 九步单 test；回归 server 84/84 + 单测 86/86 + e2e 21/21
 - [Phase 03]: [Phase 03] 03-05 用户三项人工验收 approved（2026-08-28）：SC4 dashboard 计数核对 / 管理页旅程走查 / D-34 dogfooding 删除（生产频道 10→9、smoke- 8→7，uat-/chaos-sc2- 保留）；账本 6/7/8 关闭，entry 5（D-15④ 更广 dashboard 观察）保守保留 open
 - [Phase 03]: [Phase 03] 03-05 journey test 自建自删自证定型（零 beforeEach fixture 依赖，删除步骤即清理）+ 生产验收三件套模式（冒烟 + 标记头对照 + dashboard 人工）
+- [Phase 03]: [Phase 03] code review 六修复 + W-1 接线（0.1.12, Version 68251efb）：CR-01 sk: 每 Key 独立记录成权威源（消除 KV id: 读-改-写竞态）；WR-02 重置踢连代际校验全链路（DO meta 表 + kick-all 转发头——验证器 W-1 揭示常量声明未接线=死机制，修复 + DO 直连回归测试）；生产 SMOKE OK 279ms
+- [Phase 03]: [Phase 03] 4 项 Info 级 finding（admin 鉴权无限流/CSP connect-src/generateWid 取模/删除 TOCTOU 部分）留 /gsd-secure-phase 3 评估——03-REVIEW.md/03-REVIEW-FIX.md 在案
 
 ### Pending Todos
 
@@ -123,7 +125,7 @@ None yet.
 
 ### Blockers/Concerns
 
-None — Phase 1 全部验证闭环（WINDOWS.md 3 条 unrun-verify 已关闭）。
+None — Phase 3 全部验证闭环（UAT 2/2 通过 + 0.1.12 生产复验 SMOKE OK 279ms）。
 
 注意：本机对 `*.workers.dev` 域名存在持续性 SNI 阻断 + DNS 污染（GFW 行为）；生产访问一律走自定义域名 **https://pushhub.dyun.org**（UAT 已全链路验证可用）。
 
@@ -137,6 +139,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-27T20:08:06.739Z
+Last session: 2026-08-28
 Stopped at: Phase 03 complete, ready to plan Phase 4
 Resume file: None
