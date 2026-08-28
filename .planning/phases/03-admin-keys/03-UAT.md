@@ -18,16 +18,15 @@ result: pass
 
 ### 2. 0.1.12 部署后的生产复验（review 修复上线的既定后续）
 expected: 按项目规则版本 +1 部署后：smoke SMOKE OK + /admin.html 无 x-ph-worker + 生产频道列表正常（CR-01 后 sk: 现扫路径）；DEPLOY.md 登记 0.1.12
-result: skipped
-reason: "用户跳过现场部署复验（pass 记录在部署前）；0.1.12 部署仍为 pending——已知后续步骤，不阻断阶段收口，由部署时按 DEPLOY.md 流程执行并登记"
+result: pass
 
 ## Summary
 
 total: 2
-passed: 1
+passed: 2
 issues: 0
 pending: 0
-skipped: 1
+skipped: 0
 blocked: 0
 
 ## Gaps
