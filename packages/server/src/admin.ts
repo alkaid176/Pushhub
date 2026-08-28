@@ -218,7 +218,13 @@ async function handleResetChannelKey(
   try {
     const forward = new Request(`${INTERNAL_ORIGIN}/kick-all`, {
       method: "POST",
-      headers: { [VERIFIED_HEADER]: "1" },
+      // WR-02 代际落盘：携带 KV 重写后的新 Channel Key——DO 侧 meta 表
+      // 记录当前代际，WS 升级路径据此拒绝 ≤60s 缓存窗口内旧 Key 重挂
+      //（W-1 修复：此前只声明常量未接线，代际机制失活）。
+      headers: {
+        [VERIFIED_HEADER]: "1",
+        [CHANNEL_KEY_HEADER]: record.channelKey,
+      },
     });
     await env.CHANNELS.getByName(channelId).fetch(forward);
   } catch {

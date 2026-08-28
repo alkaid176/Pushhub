@@ -249,4 +249,48 @@ describe("POST reset-channel-key（D-33 / KEY-04）", () => {
       "invalid_key",
     );
   });
+
+  it("WR-02 代际接线（W-1 回归）：kick-all 携带新 Key 落盘代际——DO 直连伪造旧 Key 转发被 401 拒绝", async () => {
+    const channel = await createChannelViaApi(`rk-gen-${uniqueSuffix()}`);
+    const oldKey = channel.channelKey;
+
+    // 重置（admin.ts kick-all 转发必须携带 X-PH-Channel-Key——代际落盘）。
+    const resetResp = await adminRequest(
+      "POST",
+      `/api/admin/channels/${channel.channelId}/reset-channel-key`,
+    );
+    expect(resetResp.status).toBe(201);
+    const { channelKey: newKey } = (await resetResp.json()) as { channelKey: string };
+
+    // 模拟「KV 缓存窗口内旧 Key 解析成功」的 Worker 转发：绕过 Worker 层
+    // ch: 预检，直接以旧 Key 值打 DO /ws（X-PH-Verified 可信头 + 旧代际）。
+    // 代际比对不匹配必须 401——这是 WR-02 修复的全链路（miniflare 无缓存
+    // 层，本地旧 Key 走 Worker 入口会先在 ch: 解析就 401，测不到 DO 侧，
+    // 故必须 DO 直连）。
+    const stub = env.CHANNELS.get(env.CHANNELS.idFromName(channel.channelId));
+    const staleForward = await stub.fetch("https://do.pushhub.internal/ws", {
+      headers: {
+        Upgrade: "websocket",
+        Connection: "Upgrade",
+        "X-PH-Verified": "1",
+        "X-PH-Channel-Key": oldKey,
+      },
+    });
+    expect(staleForward.status).toBe(401);
+    expect(staleForward.webSocket).toBeNull();
+
+    // 反例：新代际值放行 101（代际行确实被 kick-all 写入了新值——若
+    // admin.ts 未接线，两请求都会 401 或都 101，测试即失真）。
+    const freshForward = await stub.fetch("https://do.pushhub.internal/ws", {
+      headers: {
+        Upgrade: "websocket",
+        Connection: "Upgrade",
+        "X-PH-Verified": "1",
+        "X-PH-Channel-Key": newKey,
+      },
+    });
+    expect(freshForward.status).toBe(101);
+    freshForward.webSocket!.accept();
+    freshForward.webSocket!.close(1000, "done");
+  });
 });
