@@ -30,11 +30,15 @@
  *    pong/探活死线超时 → closeSocket(deadline) + 退避重连（T-02-08 假活防线）；
  *  - VISIBILITY 探活（D-27）：visible → sendPing + arm(probe, 5s) + 心跳
  *    周期接管恢复；hidden → 取消心跳与探活（页面冻结省额度，恢复时探活接管）。
+ *  - answered/ack（04-03，reply 闭环）：answered → emitAnswered（SeqDedup
+ *    之外，原帧透传）；ack → 静默零动作（Q4：answered 扇出即公共确认）。
+ *    reply 发送不进状态机（WEB-03 Pattern 7 定稿——连接层只管连接生命周期，
+ *    用户动作 fail-fast 语义在 adapter 的 reply() 公开方法）。
  *
  * import 说明（prohibition 核对）：仅引用 @pushhub/shared（冻结协议包，
  * 纯常量/类型）与本包 ./frames（类型）、./dedup（纯逻辑）——零平台 API。
  */
-import { SYNC_LIMIT_DEFAULT, type HistoryFrame, type MessageFrame } from "@pushhub/shared";
+import { SYNC_LIMIT_DEFAULT, type AnsweredFrame, type HistoryFrame, type MessageFrame } from "@pushhub/shared";
 import type { FrameResult } from "./frames";
 import { SeqDedup } from "./dedup";
 
@@ -99,6 +103,7 @@ export type MachineAction =
   | { kind: "emitStatus"; status: PushHubStatus }
   | { kind: "emitMessage"; message: MessageFrame }
   | { kind: "emitHistory"; frame: HistoryFrame }
+  | { kind: "emitAnswered"; frame: AnsweredFrame }
   | { kind: "emitError"; error: PushHubErrorPayload };
 
 /** 内部全量状态（idle/offline/destroyed 的 status 标签均为 "offline"）。 */
@@ -210,6 +215,17 @@ export function createMachine(options: MachineOptions = {}): ConnectionMachine {
         if (dedup.shouldDeliver(frame.seq)) {
           out.push({ kind: "emitMessage", message: frame });
         }
+        return;
+      case "answered":
+        // 04-03：该分支明确在 SeqDedup 之外——answered 是独立帧而非 message
+        // 帧（D-17 硬约束：SDK 按 seq 去重会吞同 seq 重发，这正是 answered
+        // 独立成帧的原因，Pitfall 2 的 SDK 侧防线）。同 wid 重复扇出（多端
+        // 竞态回声）原样透传，幂等消化归宿主按 wid 判定。
+        out.push({ kind: "emitAnswered", frame });
+        return;
+      case "ack":
+        // 04-01 Q4 定稿：ack 静默消费零输出——answered 扇出即公共确认信号，
+        // 单独 ack 公共事件徒增 API 面（回复者本人由随后的 answered 自证）。
         return;
       case "pong":
         // auto-response 回帧：两类死线一并解除（周期心跳 pongDeadline 与

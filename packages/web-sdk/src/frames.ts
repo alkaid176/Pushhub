@@ -1,8 +1,10 @@
 /**
- * parseServerFrame —— WS 接收侧帧 guard（02-01，D-07 客户端侧职责）。
+ * parseServerFrame —— WS 接收侧帧 guard（02-01，D-07 客户端侧职责；04-03 扩
+ * answered/ack 分支）。
  *
  * 职责边界（与 @pushhub/shared/validators.ts 的 validateInboundFrame 方向镜像）：
- *  - 服务端 → 客户端帧（message/history/pong/error）的结构与版本检查；
+ *  - 服务端 → 客户端帧（message/history/pong/error/answered/ack）的结构与
+ *    版本检查；
  *  - 版本先行：帧顶层 v !== PROTOCOL_VERSION（含缺失）→ fatal（断连不重连，
  *    D-07："客户端不识别的 v 即断连报错"——服务端比客户端新，重连无意义；
  *    方向对照：服务端收到坏帧只回 WsErrorFrame 不断连，chat-room.ts 注释）；
@@ -107,6 +109,27 @@ function isErrorShape(v: Record<string, unknown>): boolean {
 }
 
 /**
+ * AnsweredFrame 结构深校验（04-01 冻结字段集，04-03 SDK 侧消费——照
+ * isMessageShape 逐字段检查，未知字段忽略照 D-07）。answered 恒 true 的
+ * 语义由服务端保证（字段留给未来撤答扩展的形态稳定，D-45），守卫按冻结
+ * 形态查 boolean。answered_at 为非空 number（帧只在成功回复后发射，
+ * approve-freeze 裁量点 3）。
+ */
+function isAnsweredShape(v: Record<string, unknown>): boolean {
+  if (v.v !== PROTOCOL_VERSION) return false;
+  if (v.type !== "answered") return false;
+  if (typeof v.wid !== "string") return false;
+  if (typeof v.seq !== "number" || !Number.isInteger(v.seq) || v.seq < 0) {
+    return false;
+  }
+  if (typeof v.answered !== "boolean") return false;
+  if (!isStringOrNull(v.answered_by)) return false;
+  if (typeof v.answered_at !== "number") return false;
+  if (!isStringOrNull(v.answered_content)) return false;
+  return true;
+}
+
+/**
  * 解析服务端入站帧。
  *
  * 分流三档：
@@ -141,6 +164,16 @@ export function parseServerFrame(raw: string): FrameResult {
         : drop("malformed history frame");
     case "pong":
       return { ok: true, frame: parsed as unknown as ServerFrame };
+    case "answered":
+      return isAnsweredShape(parsed)
+        ? { ok: true, frame: parsed as unknown as ServerFrame }
+        : drop("malformed answered frame");
+    case "ack":
+      // 宽松直通照 pong 模式（04-01 Q4）：恰查 v/type/wid 三键——v 已由
+      // 版本门检查、type 已由 switch 匹配，此处只查 wid 为 string。
+      return typeof parsed.wid === "string"
+        ? { ok: true, frame: parsed as unknown as ServerFrame }
+        : drop("malformed ack frame");
     case "error":
       return isErrorShape(parsed)
         ? { ok: true, frame: parsed as unknown as ServerFrame }
