@@ -133,14 +133,27 @@ pub struct ReplyFrame {
     pub by: Option<String>,
 }
 
+/// v:1 sync 帧（客户端 → 服务端，D-11 补拉）。运行时 serde 序列化合法——
+/// 服务端 JSON.parse 键序无关；唯一字节常量约束是 PING（Pitfall 4）。
+/// 05-04 adapter 的 SendSync 动作分派消费。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncFrame {
+    pub v: i64,
+    #[serde(rename = "type")]
+    pub frame_type: String,
+    pub since: i64,
+    pub limit: u32,
+}
+
 /// 客户端 → 服务端帧（v:1：ping/sync/reply）。ping 经字节常量直发（Pitfall 4：
 /// 键序反转即失配服务端 auto-response）、sync 经 SendSync 动作参数构造——
-/// serde 结构面当前仅 reply（untagged 单变体：序列化即内层帧形态）。
-#[allow(dead_code)] // 05-04 adapter reply() / 05-05 UI 回复面构造
+/// serde 序列化面当前 sync + reply（untagged：序列化即内层帧形态）。
+#[allow(dead_code)] // Reply 由 05-05 UI 回复面构造；Sync 已由 05-04 adapter 消费
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ClientFrame {
     Reply(ReplyFrame),
+    Sync(SyncFrame),
 }
 
 /// 服务端 → 客户端帧全集（pong/message/history/answered/ack/error）。

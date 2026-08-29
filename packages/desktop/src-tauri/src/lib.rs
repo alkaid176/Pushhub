@@ -40,8 +40,21 @@ pub fn run() {
                     let handle = app.handle().clone();
                     let server = cfg.server.clone();
                     let ready = ready_rx.clone();
+                    // Task 3 将替换为 ChannelManager 统一装配（控制面/缓冲/
+                    // 状态单元由 manager 构造注入）；本 task 先以直连参数接通。
+                    let (_ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
+                    let buffer = std::sync::Arc::new(std::sync::Mutex::new(buffer::Buffer::new()));
+                    let status =
+                        std::sync::Arc::new(std::sync::Mutex::new(machine::Status::Offline));
                     tauri::async_runtime::spawn(adapter::run_channel(
-                        handle, channel, server, ready,
+                        handle,
+                        channel,
+                        server,
+                        ready,
+                        Box::new(|_msg| {}), // 05-05 接真实通知线程（本 plan 以注入回调锁定两流分离）
+                        buffer,
+                        status,
+                        ctl_rx,
                     ));
                 }
             }
