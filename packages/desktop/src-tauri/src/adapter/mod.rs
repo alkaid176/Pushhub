@@ -114,6 +114,12 @@ enum Inbound {
     /// 控制面注入（manager 生命周期 + 窗口显隐，Task 3/05-05 接线）：
     /// 机器事件直接进状态机（Visibility/Destroy/Disconnect/Connect）。
     Control(Event),
+    /// 出站直发帧（reply 等不经状态机词汇表的客户端帧，WEB-03 Pattern 7：
+    /// reply fail-fast 不进连接状态机）——manager 的 outbox 通道经转发任务
+    /// 汇入主循环（FIFO 保序）；无活跃 writer 时丢弃（上层命令已按
+    /// status==Online fail-fast，此为窄窗竞态容错，对齐 pushhub.ts
+    /// send-on-closed-socket 的容忍语义）。
+    Outbox(String),
 }
 
 /// 写侧指令（主循环 → writer 任务）。
@@ -126,6 +132,8 @@ enum Outbound {
 enum Accepted {
     Event(Event),
     Opened { writer: UnboundedSender<Outbound> },
+    /// 出站直发帧（代际无关——writer 归位状态在主循环内即时判定）。
+    Outbound(String),
 }
 
 /// 主循环入站归约——陈旧代际防护核心（对齐 pushhub.ts detach-then-close：
@@ -135,6 +143,7 @@ fn accept_inbound(msg: Inbound, current_gen: u64) -> Option<Accepted> {
     match msg {
         Inbound::Timer { kind } => Some(Accepted::Event(Event::Timer { kind })),
         Inbound::Control(event) => Some(Accepted::Event(event)),
+        Inbound::Outbox(text) => Some(Accepted::Outbound(text)),
         Inbound::Opened { gen, writer } => {
             if gen != current_gen {
                 return None; // 陈旧握手（已被新连接取代）——丢弃句柄即关连接
@@ -245,6 +254,9 @@ struct Runtime<E: Effects> {
 ///
 /// notify_hook / buffer / status：由 manager 统一构造注入（05-05 接真实通知
 /// 线程；本 plan 以测试双计数器锁定两流分离）。
+///
+/// outbox：出站直发帧入口（reply 等非机器帧）——manager 持发送端
+/// （commands::reply 经 manager.send_raw 写入），本任务转发进主循环。
 pub async fn run_channel(
     app: AppHandle,
     channel: ChannelConfig,
@@ -254,9 +266,23 @@ pub async fn run_channel(
     buffer: Arc<Mutex<Buffer>>,
     status: Arc<Mutex<Status>>,
     mut control: UnboundedReceiver<Event>,
+    mut outbox: UnboundedReceiver<String>,
 ) {
     let ws_url = build_ws_url(&server, &channel.key);
     let (tx, mut rx) = mpsc::unbounded_channel::<Inbound>();
+
+    // 出站直发帧转发（reply 路径）：outbox → 主循环 Inbound 队列（与连接侧
+    // 事件 FIFO 保序；主循环退出 tx drop 后转发任务自然收敛）。
+    {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            while let Some(text) = outbox.recv().await {
+                if tx.send(Inbound::Outbox(text)).is_err() {
+                    break; // 主循环已结束
+                }
+            }
+        });
+    }
 
     // 随机种子：时间 × 频道 ID（两频道抖动序列不同步）。
     let nanos = std::time::SystemTime::now()
@@ -318,6 +344,13 @@ pub async fn run_channel(
             Accepted::Opened { writer } => {
                 rt.effects.set_writer(Some(writer));
                 Event::WsOpen
+            }
+            Accepted::Outbound(text) => {
+                // reply 等非机器帧直发 writer（WEB-03 Pattern 7：不进状态机）；
+                // 无活跃 writer 时 send_text 静默丢弃——上层命令已按
+                // status==Online fail-fast，窄窗竞态容错。
+                rt.effects.send_text(text);
+                continue;
             }
         };
         let destroy = matches!(event, Event::Destroy);
@@ -999,6 +1032,11 @@ mod tests {
         assert!(matches!(
             accept_inbound(Inbound::Control(Event::Visibility { visible: true }), 7),
             Some(Accepted::Event(Event::Visibility { visible: true }))
+        ));
+        // Outbox 直发帧同样与代际无关（writer 归位状态主循环内即时判定）。
+        assert!(matches!(
+            accept_inbound(Inbound::Outbox(r#"{"v":1,"type":"reply"}"#.to_string()), 7),
+            Some(Accepted::Outbound(_))
         ));
     }
 }

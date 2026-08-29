@@ -40,8 +40,12 @@ pub const SYNC_LIMIT_MAX: u32 = 500;
 
 /// D-53 回复展示名（reply 帧 by 字段）最大长度：64 UTF-16 码元（reply 命令层
 /// 宽松预检消费，05-05；权威校验在服务端）。
-#[allow(dead_code)]
 pub const BY_MAX: usize = 64;
+
+/// D-02 消息 text 最大长度（32KB 宽松档，shared LIMITS.TEXT_MAX 对齐）——
+/// reply 命令层宽松预检消费（05-05）：超限显式拒绝不截断（Pitfall 6 +
+/// plan prohibitions；权威校验在服务端，客户端按 chars() 近似）。
+pub const TEXT_MAX: usize = 32768;
 
 /// v:1 message 帧（冻结 13 字段集，D-03；省略语义：可选字段未提供时键不出现）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -118,7 +122,7 @@ pub struct WsErrorFrame {
 /// v:1 reply 帧（客户端 → 服务端，04-01 D-45/D-46）。selected_option 与 text
 /// 恰提供其一（载荷恰一校验在发送侧命令层，域级校验在服务端 DO）；by 为
 /// 自报展示名，缺省不序列化（省略语义——键不出现即匿名回复，D-53）。
-#[allow(dead_code)] // 05-04 adapter reply() 公开方法 / 05-05 UI 回复面构造
+/// 05-05 commands::reply 构造消费。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplyFrame {
     pub v: i64,
@@ -146,9 +150,9 @@ pub struct SyncFrame {
 }
 
 /// 客户端 → 服务端帧（v:1：ping/sync/reply）。ping 经字节常量直发（Pitfall 4：
-/// 键序反转即失配服务端 auto-response）、sync 经 SendSync 动作参数构造——
-/// serde 序列化面当前 sync + reply（untagged：序列化即内层帧形态）。
-#[allow(dead_code)] // Reply 由 05-05 UI 回复面构造；Sync 已由 05-04 adapter 消费
+/// 键序反转即失配服务端 auto-response）、sync 经 SendSync 动作参数构造、
+/// reply 经 05-05 commands::reply 构造——serde 序列化面 sync + reply
+/// （untagged：序列化即内层帧形态）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ClientFrame {

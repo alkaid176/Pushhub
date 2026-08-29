@@ -16,8 +16,10 @@
  */
 mod adapter;
 mod buffer;
+mod commands;
 mod config;
 mod machine;
+mod notify;
 mod protocol;
 
 use std::sync::Arc;

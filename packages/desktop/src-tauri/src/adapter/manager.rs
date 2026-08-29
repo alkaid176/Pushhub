@@ -55,6 +55,9 @@ pub struct SpawnInputs {
     pub buffer: Arc<Mutex<Buffer>>,
     pub status: Arc<Mutex<Status>>,
     pub control: UnboundedReceiver<Event>,
+    /// 出站直发帧入口（reply 等非机器帧，05-05 commands::reply 经
+    /// manager.send_raw 写入——run_channel 转发进主循环直发 writer）。
+    pub outbox: UnboundedReceiver<String>,
 }
 
 /// 频道任务工厂（测试切面：注入假任务验证生命周期/聚合语义）。
@@ -73,6 +76,7 @@ pub fn production_runner(app: tauri::AppHandle) -> ChannelRunner {
             p.buffer,
             p.status,
             p.control,
+            p.outbox,
         ))
     })
 }
@@ -83,6 +87,8 @@ struct ChannelHandle {
     config: ChannelConfig,
     /// 生命周期/显隐控制端（Destroy/Visibility 等机器事件下发）。
     control: UnboundedSender<Event>,
+    /// 出站直发帧通道（reply 等非机器帧——send_raw 写入端）。
+    outbox: UnboundedSender<String>,
     /// 每频道环形缓冲（D-62；snapshot 数据源——remove 后随句柄丢弃）。
     buffer: Arc<Mutex<Buffer>>,
     /// 状态共享单元（run_channel EmitStatus 写 / statuses() 读）。
@@ -93,7 +99,9 @@ struct ChannelHandle {
 
 /// 多频道管理器（Tauri State 注册；05-05 commands / 05-06 UI 消费面）。
 pub struct ChannelManager {
-    server: String,
+    /// 服务端地址（向导首配经 set_server 更新——spawn 时读取；Mutex 因
+    /// set_server 与 spawn_channel 并发调用）。
+    server: Mutex<String>,
     /// 通知钩子（统一构造注入各频道——两流分离不变量在 run_channel 分派层）。
     notify_hook: Arc<dyn Fn(RealtimeMessage) + Send + Sync>,
     /// 频道任务工厂（测试注入假任务）。
@@ -111,12 +119,18 @@ impl ChannelManager {
     ) -> Self {
         let (ready_tx, _) = watch::channel(false);
         Self {
-            server,
+            server: Mutex::new(server),
             notify_hook,
             runner,
             ready_tx,
             channels: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// 更新服务端地址（向导首配场景：server + 第一个频道一起落；后续
+    /// spawn 以此为连接基址——05-05 commands::add_channel 调用）。
+    pub fn set_server(&self, server: String) {
+        *self.server.lock().unwrap() = server;
     }
 
     /// 前端就绪信号发送端（lib.rs listen ph://frontend-ready 接线用）。
@@ -145,24 +159,27 @@ impl ChannelManager {
             return Err(ManagerError::ChannelLimitReached);
         }
         let (control_tx, control_rx) = mpsc::unbounded_channel::<Event>();
+        let (outbox_tx, outbox_rx) = mpsc::unbounded_channel::<String>();
         let buffer = Arc::new(Mutex::new(Buffer::new()));
         let status = Arc::new(Mutex::new(Status::Offline));
         let shared_hook = Arc::clone(&self.notify_hook);
         let notify_hook = Box::new(move |m: RealtimeMessage| shared_hook(m));
         let join = (self.runner)(SpawnInputs {
             config: config.clone(),
-            server: self.server.clone(),
+            server: self.server.lock().unwrap().clone(),
             ready: self.ready_tx.subscribe(),
             notify_hook,
             buffer: Arc::clone(&buffer),
             status: Arc::clone(&status),
             control: control_rx,
+            outbox: outbox_rx,
         });
         channels.insert(
             config.id.clone(),
             ChannelHandle {
                 config: config.clone(),
                 control: control_tx,
+                outbox: outbox_tx,
                 buffer,
                 status,
                 join,
@@ -202,6 +219,28 @@ impl ChannelManager {
         let channels = self.channels.lock().unwrap();
         for handle in channels.values() {
             let _ = handle.control.send(Event::Visibility { visible });
+        }
+    }
+
+    /// 单频道状态查询（05-05 commands::reply 的在线 fail-fast 数据源；
+    /// 频道不存在返回 None）。
+    pub fn channel_status(&self, id: &str) -> Option<Status> {
+        let channels = self.channels.lock().unwrap();
+        channels.get(id).map(|h| *h.status.lock().unwrap())
+    }
+
+    /// 出站直发帧（reply 等非机器帧，WEB-03 Pattern 7）：写入频道的 outbox
+    /// 通道，由频道任务直发 writer（不经状态机词汇表）。频道不存在返回
+    /// ChannelNotFound；频道任务已停机的窄窗竞态由发送端静默容忍（上层
+    /// 已按 status==Online fail-fast）。
+    pub fn send_raw(&self, id: &str, text: String) -> Result<(), ManagerError> {
+        let channels = self.channels.lock().unwrap();
+        match channels.get(id) {
+            Some(handle) => {
+                let _ = handle.outbox.send(text);
+                Ok(())
+            }
+            None => Err(ManagerError::ChannelNotFound(id.to_string())),
         }
     }
 
@@ -257,6 +296,7 @@ mod tests {
             id: id.to_string(),
             name: format!("n-{id}"),
             key: format!("phc_{id}"),
+            muted: false,
         }
     }
 
@@ -441,5 +481,95 @@ mod tests {
         assert!(mgr.snapshot("ch1").is_some(), "restart 后句柄回表");
         soon(|| mgr.statuses().len() == 1).await;
         assert_eq!(mgr.len(), 1);
+    }
+
+    /// set_server：更新后新 spawn 的频道以新地址连接（SpawnInputs.server 记录）。
+    #[tokio::test]
+    async fn set_server_updates_spawn_base_url() {
+        let servers = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&servers);
+        let runner: ChannelRunner = Arc::new(move |p: SpawnInputs| {
+            let server = p.server.clone();
+            let seen = Arc::clone(&seen);
+            let mut control = p.control;
+            tauri::async_runtime::spawn(async move {
+                seen.lock().unwrap().push(server);
+                while let Some(event) = control.recv().await {
+                    if matches!(event, Event::Destroy) {
+                        break;
+                    }
+                }
+            })
+        });
+        let mgr = ChannelManager::new(
+            "http://old".to_string(),
+            Arc::new(|_m: RealtimeMessage| {}),
+            runner,
+        );
+        mgr.spawn_channel(&cfg("ch1")).unwrap();
+        mgr.set_server("https://pushhub.dyun.org".to_string());
+        mgr.spawn_channel(&cfg("ch2")).unwrap();
+        mgr.remove_channel("ch1").unwrap();
+        mgr.remove_channel("ch2").unwrap();
+        // 假任务异步记录 SpawnInputs.server——有界轮询到两条再断言顺序。
+        soon(|| servers.lock().unwrap().len() == 2).await;
+        assert_eq!(
+            *servers.lock().unwrap(),
+            vec!["http://old".to_string(), "https://pushhub.dyun.org".to_string()],
+            "set_server 后续 spawn 以新地址为基址"
+        );
+    }
+
+    /// send_raw：出站直发帧送达频道任务（outbox 接收端捕获）；未知频道
+    /// ChannelNotFound。
+    #[tokio::test]
+    async fn send_raw_delivers_and_unknown_not_found() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&sent);
+        let runner: ChannelRunner = Arc::new(move |p: SpawnInputs| {
+            let captured = Arc::clone(&captured);
+            let mut control = p.control;
+            let mut outbox = p.outbox;
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::select! {
+                        ev = control.recv() => match ev {
+                            Some(e) if matches!(e, Event::Destroy) => break,
+                            Some(_) => {}
+                            None => break,
+                        },
+                        t = outbox.recv() => {
+                            if let Some(t) = t { captured.lock().unwrap().push(t); }
+                        }
+                    }
+                }
+            })
+        });
+        let mgr = ChannelManager::new(
+            "http://s".to_string(),
+            Arc::new(|_m: RealtimeMessage| {}),
+            runner,
+        );
+        mgr.spawn_channel(&cfg("ch1")).unwrap();
+        mgr.send_raw("ch1", r#"{"v":1,"type":"reply"}"#.to_string()).unwrap();
+        soon(|| sent.lock().unwrap().len() == 1).await;
+        assert_eq!(sent.lock().unwrap()[0], r#"{"v":1,"type":"reply"}"#);
+        assert_eq!(
+            mgr.send_raw("ghost", "x".to_string()).unwrap_err(),
+            ManagerError::ChannelNotFound("ghost".to_string())
+        );
+        mgr.remove_channel("ch1").unwrap();
+    }
+
+    /// channel_status：假任务写 Online 后可查（reply fail-fast 数据源）。
+    #[tokio::test]
+    async fn channel_status_reads_shared_cell() {
+        let mgr = manager_with(fake_runner(
+            Arc::new(Mutex::new(vec![])),
+            Arc::new(Mutex::new(vec![])),
+        ));
+        mgr.spawn_channel(&cfg("ch1")).unwrap();
+        soon(|| mgr.channel_status("ch1") == Some(Status::Online)).await;
+        assert_eq!(mgr.channel_status("ghost"), None);
     }
 }

@@ -7,18 +7,22 @@
 //!    折叠）、`launch = "channel_id:wid"`（点击定位上下文）；
 //!  - 点击回调（Spike 实证）：点正文 → `Some(ActivatedAction)`，其 `arg`
 //!    就是 launch 字符串——[`parse_launch`] 还原二元组后经 AppHandle
-//!    emit `ph://locate`（载荷 `{channel_id, wid}`，前端由 05-05/05-06 接）；
+//!    emit `ph://locate`（载荷 `{channel_id, wid}`，前端由 05-06 消费）；
 //!  - AUMID 三档（Pitfall 4）：register() 自有 AUMID（对齐 Tauri identifier
 //!    `app.pushhub.desktop`）→ 失败回退 `POWERSHELL_AUM_ID` 常量并打日志。
 //!
-//! 本模块自包含（不引用 `crate::` 其他模块）：lib.rs 的 `mod notify;` 声明
-//! 归 05-04 波次所有（协调并行约束），当前经 `tests/notify_tests.rs` 的
-//! `#[path]` 载体编译测试；05-05 接线 lib.rs 后该载体可移除。
+//! 05-05 起经 lib.rs `mod notify;` 编入 lib 目标（05-03 的 tests/
+//! notify_tests.rs #[path] 载体已随接线移除）；通知线程装配（spawn_notify_
+//! thread 调用）与 adapter 决策接线见 lib.rs / adapter。
 //!
 //! 安全（threat model）：make_title/summarize 的输入只有频道名/title/text，
 //! Channel Key 不进通知路径（T-05-03-02）；parse_launch 严格单冒号拆分，
 //! 畸形返回 None 丢弃（T-05-03-03）；快捷选项（options）不出现在通知中
 //! ——结构上 NotifyCmd 就没有该字段（D-68）。
+
+// 公开 API 消费者标注（05-02 同款策略）：spawn_notify_thread 由 lib.rs
+// setup 装配；NotifyCmd 族由 commands/adapter 接线；其余纯函数测试直消。
+#![allow(dead_code)]
 
 use std::sync::mpsc::Receiver;
 
@@ -58,7 +62,7 @@ impl Priority {
 }
 
 /// 通知命令（跨线程传入专用 OS 线程；Toast 值可跨线程构造，manager 单线程持有）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NotifyCmd {
     Show {
         channel_id: String,
