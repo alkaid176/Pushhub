@@ -318,22 +318,17 @@ fn reply_serialization_omits_absent_fields() {
         text: Some("done".to_string()),
         by: None,
     };
-    let json = serde_json::to_string(&ClientFrame::Reply(frame)).unwrap();
+    let json = serde_json::to_string(&ClientFrame::Reply(frame.clone())).unwrap();
     assert!(!json.contains("by"), "by 缺省不序列化（省略语义）: {json}");
     assert!(!json.contains("selected_option"), "缺省可选字段同省略: {json}");
     assert!(json.contains(r#""text":"done""#), "{json}");
 
     let with_by = ReplyFrame {
         by: Some("运维笔记本".to_string()),
-        ..frame_clone(&frame)
+        ..frame
     };
     let json = serde_json::to_string(&ClientFrame::Reply(with_by)).unwrap();
     assert!(json.contains("by"), "by 提供时序列化: {json}");
-}
-
-/// ReplyFrame 无 Copy——测试内克隆辅助（clone derive 已有，这里只避免重复字面量）。
-fn frame_clone(f: &ReplyFrame) -> ReplyFrame {
-    f.clone()
 }
 
 #[test]

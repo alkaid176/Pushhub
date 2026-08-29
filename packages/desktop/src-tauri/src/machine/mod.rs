@@ -18,6 +18,8 @@
 //!  - Frame(History) → EmitHistory（tracer 直通——dedup 过滤与 sendSync 05-02）
 //!  - Frame(Fatal) → EmitError(fatal) + CloseSocket(Fatal) + Offline 停机（此后零动作）
 
+pub mod dedup;
+
 use std::collections::HashSet;
 
 use serde::Serialize;
@@ -295,6 +297,26 @@ impl Machine {
             FrameResult::Ok(ServerFrame::History(frame)) => {
                 // tracer：帧直通（dedup 过滤 + sendSync 补拉序列 05-02 填充）。
                 out.push(Action::EmitHistory { frame });
+            }
+            FrameResult::Ok(ServerFrame::Answered(frame)) => {
+                // 04-03：answered 在 SeqDedup 之外原样透传（D-17 硬约束——
+                // SDK 按 seq 去重会吞同 seq 重发，answered 独立成帧正是为此；
+                // 同 wid 重复扇出照发，幂等消化归宿主按 wid 判定）。
+                out.push(Action::EmitAnswered { frame });
+            }
+            FrameResult::Ok(ServerFrame::Ack(_)) => {
+                // 04-01 Q4 定稿：ack 静默消费零输出——answered 扇出即公共确认
+                // 信号（回复者本人由随后的 answered 自证）。
+            }
+            FrameResult::Ok(ServerFrame::Error(e)) => {
+                // 服务端 WS 错误帧（invalid_frame 等）——非致命透传，连接保持。
+                out.push(Action::EmitError {
+                    error: ErrorPayload {
+                        message: e.message,
+                        code: Some(e.code),
+                        fatal: None,
+                    },
+                });
             }
             FrameResult::Drop(_) => {
                 // 非致命（不可解析/结构违例/未知 type）：静默丢弃（D-07）。
