@@ -19,6 +19,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # 生产 wss:// 全挂的阴险坑；rustls 系无系统 OpenSSL 依赖，webpki 根覆盖
 # Cloudflare 边缘证书，T-05-01-01）
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+# WebSocketStream 的 split()/Sink/Stream 操作（tokio-tungstenite 自身依赖树内已有，
+# 直接声明仅暴露 API——参照工程 topology-config-tool 同款）
+futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 percent-encoding = "2"

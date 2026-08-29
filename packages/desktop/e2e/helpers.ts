@@ -15,7 +15,7 @@ import { chromium, expect, type APIRequestContext, type Browser, type Page } fro
 // 类型注：工作区未装 @types/node（02-05 既定取舍——行级 @ts-expect-error 压制
 // 而非新增 devDependency；运行时 Playwright 的 node 环境照常解析）。
 // @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, exec, type ChildProcess } from "node:child_process";
 // @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 // @ts-expect-error -- 工作区未装 @types/node（见上"类型注"）
@@ -141,7 +141,7 @@ export async function launchDesktop(
     }
   }
   if (browser === null) {
-    killTree(child);
+    await killTree(child);
     throw new Error(`connectOverCDP ${endpoint} 超时（${timeoutMs}ms）: ${String(lastError)}`);
   }
 
@@ -155,7 +155,7 @@ export async function launchDesktop(
   }
   if (page === undefined) {
     await browser.close().catch(() => {});
-    killTree(child);
+    await killTree(child);
     throw new Error("CDP 已连接但 WebView2 窗口页面未出现（20s）");
   }
 
@@ -163,25 +163,80 @@ export async function launchDesktop(
     browser,
     page,
     cleanup: async () => {
-      killTree(child);
+      await killTree(child);
       await browser!.close().catch(() => {});
     },
   };
 }
 
-/** 杀进程树（Pitfall 9）：shell:true 的 pid 是 shell 的——Windows 必须 taskkill /T /F。 */
-function killTree(child: ChildProcess): void {
-  if (child.pid === undefined || child.killed) return;
-  if (platform === "win32") {
-    const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
-    });
-    killer.on("error", () => child.kill());
-  } else {
-    try {
-      kill(-child.pid, "SIGTERM");
-    } catch {
-      child.kill("SIGTERM");
+/** 等待一条 taskkill 结束（不吞错误信息——诊断失败用）。 */
+function runTaskKill(args: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const killer = spawn("taskkill", args, { shell: false });
+    killer.on("close", (code: number | null) => resolve(code ?? -1));
+    killer.on("error", () => resolve(-1));
+  });
+}
+
+/** 取监听指定端口的进程 pid（Windows：Get-NetTCPConnection）。 */
+function portOccupantPid(port: number): Promise<number[]> {
+  return new Promise((resolve) => {
+    exec(
+      `powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).OwningProcess"`,
+      (err: unknown, stdout: string) => {
+        if (err) {
+          resolve([]);
+          return;
+        }
+        const pids = stdout
+          .split(/\s+/)
+          .map((s: string) => Number(s))
+          .filter((n: number) => Number.isInteger(n) && n > 0);
+        resolve([...new Set(pids)]);
+      },
+    );
+  });
+}
+
+const VITE_PORT = 1420;
+
+/**
+ * 杀进程树（Pitfall 9 + 实证加固：taskkill /T 单发不可靠——树遍历竞态会把
+ * app/vite 孤儿化，残app 撞 single-instance、残 vite 撞 1420 strictPort，
+ * 毒害下一次运行）。三层确定性清杀 + 端口释放验证：
+ *  1. 树杀 spawn 的 shell pid（cmd → pnpm → tauri cli → vite/cargo/app）；
+ *  2. 按映像名杀 app（单实例保证同时至多一个 pushhub-desktop.exe，
+ *     连带其 msedgewebview2 子树）；
+ *  3. 按 1420 端口杀孤儿 vite；
+ *  4. 轮询验证 1420 释放（15s），未释放即抛错——响亮失败优于静默污染。
+ */
+async function killTree(child: ChildProcess): Promise<void> {
+  if (platform !== "win32") {
+    if (child.pid !== undefined) {
+      try {
+        kill(-child.pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
     }
+    return;
   }
+
+  if (child.pid !== undefined && !child.killed) {
+    await runTaskKill(["/pid", String(child.pid), "/T", "/F"]);
+  }
+  await runTaskKill(["/IM", "pushhub-desktop.exe", "/T", "/F"]);
+
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const occupants = await portOccupantPid(VITE_PORT);
+    if (occupants.length === 0) return;
+    for (const pid of occupants) {
+      await runTaskKill(["/pid", String(pid), "/T", "/F"]);
+    }
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(
+    `cleanup: 端口 ${VITE_PORT} 在 15s 内未释放（孤儿 vite 残留——下次运行将因 strictPort 失败）`,
+  );
 }
