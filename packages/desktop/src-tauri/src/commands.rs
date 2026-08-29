@@ -432,9 +432,10 @@ pub fn set_display_name(
     do_set_display_name(&state, name)
 }
 
-/// toggle_dnd 内部实现：落盘 + 通知线程 SetDnd（双写保持一致——线程内
-/// should_suppress 与决策矩阵读配置是两道独立防线，同一数据源驱动）。
-fn do_toggle_dnd(state: &AppState, dnd: bool) -> Result<(), CmdError> {
+/// toggle_dnd 内部实现（托盘 CheckItem 与命令双入口共用）：落盘 + 通知线程
+/// SetDnd（双写保持一致——线程内 should_suppress 与决策矩阵读配置是两道
+/// 独立防线，同一数据源驱动）。
+pub(crate) fn do_toggle_dnd(state: &AppState, dnd: bool) -> Result<(), CmdError> {
     let mut cfg = state.config.lock().unwrap();
     cfg.dnd = dnd;
     persist(state, &cfg)?;
