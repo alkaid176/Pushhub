@@ -12,22 +12,146 @@
 /// `[text](url)` → text、`![alt](url)` → alt、行首 `#` 标题、列表标记
 /// （`-`/`*`/`+`/`数字.`）、`>` 引用标记。
 pub fn strip_markdown(text: &str) -> String {
-    let _ = text;
-    unimplemented!("RED")
+    let mut out: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let leading = line.trim_start();
+        // 围栏代码块：围栏行本身丢弃（开/闭切换），内容行原样保留
+        if leading.starts_with("```") || leading.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            out.push(line.to_string());
+            continue;
+        }
+        out.push(strip_line(leading));
+    }
+    out.join("\n")
+}
+
+/// 行级标记剥离：引用 `>`、标题 `#`、列表标记（`-`/`*`/`+`/`数字.`）。
+fn strip_line(line: &str) -> String {
+    let mut s = line;
+    // 引用标记（连续 `>` 一并剥掉，嵌套引用也归一）
+    s = s.trim_start_matches('>').trim_start();
+    // 标题井号：`#`+ 后跟空格或行尾才是标题（CommonMark 语义，#hashtag 保留）
+    if s.starts_with('#') {
+        let after = s.trim_start_matches('#');
+        if after.is_empty() || after.starts_with(' ') {
+            s = after.trim_start();
+        }
+    }
+    // 列表标记：`- ` / `* ` / `+ ` / `数字. `
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2
+        && (bytes[0] == b'-' || bytes[0] == b'*' || bytes[0] == b'+')
+        && bytes[1] == b' '
+    {
+        s = &s[2..];
+    } else if let Some((digits, rest)) = split_leading_digits(s) {
+        if digits > 0 && rest.starts_with(". ") {
+            s = &rest[2..];
+        }
+    }
+    strip_inline(s).trim().to_string()
+}
+
+/// 行首连续数字长度拆分（无数字返回 (0, 原串)）。
+fn split_leading_digits(s: &str) -> Option<(usize, &str)> {
+    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    Some((end, &s[end..]))
+}
+
+/// 行内标记剥离：图片/链接保留文本、删除线/粗体/斜体/行内代码去标记。
+fn strip_inline(s: &str) -> String {
+    let s = replace_links(s);
+    let s = s.replace("~~", "").replace("**", "").replace("__", "");
+    let s = remove_paired(&s, '*');
+    let s = remove_paired(&s, '_');
+    s.replace('`', "")
+}
+
+/// `![alt](url)` → alt、`[text](url)` → text；非链接形态的方括号原样保留。
+/// （不支持嵌套方括号——Markdown 链接文本不含裸 `]`。）
+fn replace_links(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let is_img = chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[';
+        if chars[i] == '[' || is_img {
+            let start = if is_img { i + 1 } else { i };
+            if let Some(rel_close) = chars[start + 1..].iter().position(|&c| c == ']') {
+                let close = start + 1 + rel_close;
+                if close + 1 < chars.len() && chars[close + 1] == '(' {
+                    if let Some(rel_paren) = chars[close + 2..].iter().position(|&c| c == ')') {
+                        for &c in &chars[start + 1..close] {
+                            out.push(c);
+                        }
+                        i = close + 2 + rel_paren + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// 成对标记移除（`*italic*` → italic）：保留标记间内容，去两侧标记；
+/// 落单的标记字符按字面保留。
+fn remove_paired(s: &str, marker: char) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == marker {
+            if let Some(rel) = chars[i + 1..].iter().position(|&c| c == marker) {
+                for &c in &chars[i + 1..i + 1 + rel] {
+                    out.push(c);
+                }
+                i = i + 1 + rel + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 /// 按 chars 计数截断（不超过 `max_chars` 个字符；不追加省略号——
 /// 长度语义由调用侧常量 SUMMARY_MAX_CHARS 控制）。
 pub fn summarize(text: &str, max_chars: usize) -> String {
-    let _ = (text, max_chars);
-    unimplemented!("RED")
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else {
+        text.chars().take(max_chars).collect()
+    }
 }
 
 /// 通知标题组装：`"{频道名}: {标题}"`；title 缺失（None 或空白）时取
 /// text 剥 Markdown 后的首行；频道名为空时不加前缀。
 pub fn make_title(channel_name: &str, title: Option<&str>, text: &str) -> String {
-    let _ = (channel_name, title, text);
-    unimplemented!("RED")
+    let provided = title.map(str::trim).filter(|t| !t.is_empty());
+    let head_src = match provided {
+        Some(t) => t.to_string(),
+        None => {
+            let stripped = strip_markdown(text);
+            stripped.lines().next().unwrap_or_default().to_string()
+        }
+    };
+    // 提供的 title 也过一遍行内剥离（**加粗标题** → 加粗标题），并压到单行
+    let head = strip_inline(&head_src);
+    let head = head.lines().next().unwrap_or_default().trim();
+    let name = channel_name.trim();
+    if name.is_empty() || head.is_empty() {
+        return if name.is_empty() { head.to_string() } else { name.to_string() };
+    }
+    format!("{name}: {head}")
 }
 
 #[cfg(test)]

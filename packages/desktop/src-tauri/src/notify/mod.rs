@@ -92,28 +92,43 @@ pub struct ToastFields {
 /// - launch = "channel_id:wid"（单 ASCII 冒号；点击定位上下文）
 /// - high → Sound::Default（横幅+系统声）；normal/low → Sound::None（无声横幅）
 pub fn build_toast_fields(cmd: &NotifyCmd) -> ToastFields {
-    let _ = cmd;
-    unimplemented!("RED")
+    let NotifyCmd::Show { channel_id, wid, priority, .. } = cmd else {
+        // 非 Show 命令没有 Toast 语义——调用侧（线程循环）不会走到这里
+        unreachable!("build_toast_fields only accepts Show commands")
+    };
+    // D-66 裁决版三档映射（Sound 无 PartialEq，测试侧用 matches! 断言变体）
+    let sound = match priority {
+        Priority::High => Sound::Default,
+        Priority::Normal | Priority::Low => Sound::None,
+    };
+    ToastFields {
+        tag: wid.clone(),
+        group: channel_id.clone(),
+        launch: build_launch(channel_id, wid),
+        sound,
+    }
 }
 
 /// launch 字符串构造（与 [`parse_launch`] 互逆）。
 pub fn build_launch(channel_id: &str, wid: &str) -> String {
-    let _ = (channel_id, wid);
-    unimplemented!("RED")
+    // 单 ASCII 冒号连接；channel id 与 wid 均为服务端生成 ASCII，无编码歧义
+    format!("{channel_id}:{wid}")
 }
 
 /// launch 解析：恰一 ASCII 冒号且两侧非空 → `(channel_id, wid)`；
 /// 无冒号/多冒号/任一侧为空 → None（T-05-03-03：畸形激活上下文直接丢弃）。
 pub fn parse_launch(launch: &str) -> Option<(String, String)> {
-    let _ = launch;
-    unimplemented!("RED")
+    let parts: Vec<&str> = launch.split(':').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return None;
+    }
+    Some((parts[0].to_string(), parts[1].to_string()))
 }
 
 /// D-70 勿扰抑制矩阵：dnd 为真时仅抑制 Show（Remove/SetDnd 照常放行——
 /// answered 移除与勿扰开关本身不受勿扰影响）。
 pub fn should_suppress(dnd: bool, cmd: &NotifyCmd) -> bool {
-    let _ = (dnd, cmd);
-    unimplemented!("RED")
+    dnd && matches!(cmd, NotifyCmd::Show { .. })
 }
 
 /// 专用通知线程（Pitfall 5：ToastManager !Send——只存在于本函数体内）。
@@ -125,8 +140,73 @@ pub fn spawn_notify_thread(
     app: tauri::AppHandle,
     rx: Receiver<NotifyCmd>,
 ) -> std::thread::JoinHandle<()> {
-    let _ = (app, rx);
-    unimplemented!("RED")
+    use tauri::Emitter;
+
+    std::thread::spawn(move || {
+        // ---- AUMID 三档策略（Pitfall 4；Spike 实证第一档 register 在本机可行）----
+        let aumid: &str = match winrt_toast_reborn::register(APP_AUMID, "PushHub", None) {
+            Ok(()) => APP_AUMID,
+            Err(e) => {
+                eprintln!("[notify] AUMID register failed {e:?} — fallback POWERSHELL_AUM_ID");
+                ToastManager::POWERSHELL_AUM_ID
+            }
+        };
+
+        // ---- 激活回调（Spike 实证：点正文 → Some(action)，arg == launch 字符串；
+        //      空参数激活（None）与畸形 launch 一律丢弃——T-05-03-03）----
+        let app_for_click = app.clone();
+        let manager = ToastManager::new(aumid).on_activated(None, move |action| {
+            if let Some(action) = action {
+                if let Some((channel_id, wid)) = parse_launch(&action.arg) {
+                    if let Err(e) = app_for_click.emit(
+                        "ph://locate",
+                        serde_json::json!({ "channel_id": channel_id, "wid": wid }),
+                    ) {
+                        eprintln!("[notify] ph://locate emit failed: {e:?}");
+                    }
+                }
+            }
+        });
+
+        // ---- 命令循环（通道关闭即所有 Sender drop 时线程自然退出）----
+        let mut dnd = false;
+        for cmd in rx {
+            if should_suppress(dnd, &cmd) {
+                continue; // D-70：勿扰期间 Show 完全不出通知（裁决：不做仅进通知中心）
+            }
+            match cmd {
+                NotifyCmd::Show { .. } => {
+                    let fields = build_toast_fields(&cmd);
+                    let NotifyCmd::Show { channel_name, title, text, .. } = &cmd else {
+                        unreachable!("arm pattern guarantees Show")
+                    };
+                    let title_text =
+                        summary::make_title(channel_name, title.as_deref(), text);
+                    let body = summary::summarize(
+                        &summary::strip_markdown(text),
+                        SUMMARY_MAX_CHARS,
+                    );
+                    let mut toast = Toast::new();
+                    toast
+                        .text1(title_text)
+                        .text2(body)
+                        .tag(fields.tag)
+                        .group(fields.group)
+                        .launch(fields.launch)
+                        .audio(Audio::new(fields.sound));
+                    if let Err(e) = manager.show(&toast) {
+                        eprintln!("[notify] show failed: {e:?}");
+                    }
+                }
+                NotifyCmd::Remove { channel_id, wid } => {
+                    if let Err(e) = manager.remove_grouped_tag(&channel_id, &wid) {
+                        eprintln!("[notify] remove_grouped_tag failed: {e:?}");
+                    }
+                }
+                NotifyCmd::SetDnd(v) => dnd = v,
+            }
+        }
+    })
 }
 
 #[cfg(test)]
