@@ -11,6 +11,7 @@
  * ——run_channel 等待该信号后才 Connect；超时 5s 兜底无前端场景。
  */
 mod adapter;
+mod buffer;
 mod config;
 mod machine;
 mod protocol;
