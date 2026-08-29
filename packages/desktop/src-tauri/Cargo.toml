@@ -19,6 +19,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # 生产 wss:// 全挂的阴险坑；rustls 系无系统 OpenSSL 依赖，webpki 根覆盖
 # Cloudflare 边缘证书，T-05-01-01）
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+# G-05-5：rustls-tls-webpki-roots 不蕴含 crypto provider——wss:// 走默认
+# ClientConfig::builder() 在 rustls crypto/mod.rs:249 panic（叠加 release
+# panic=abort 即全进程静默闪退）。加直接依赖启用 ring provider（Windows
+# MSVC 免 CMake/NASM；aws-lc-rs 需重工具链不取），feature 统一自动惠及
+# connect_async 默认 builder——probe_connection（commands.rs）与
+# adapter/mod.rs CreateSocket 主连接两路径同时生效，无需改业务代码。
+# 0.23 与依赖树既有解析（Cargo.lock 已有 0.23.43）统一，不引入新包。
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "logging", "tls12"] }
 # WebSocketStream 的 split()/Sink/Stream 操作（tokio-tungstenite 自身依赖树内已有，
 # 直接声明仅暴露 API——参照工程 topology-config-tool 同款）
 futures-util = "0.3"
