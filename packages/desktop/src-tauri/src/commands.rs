@@ -1071,5 +1071,49 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, "unreachable");
     }
+
+    /// TLS 分支回归护栏（G-05-5/WIN-04）：裸 TcpListener 先收 ClientHello
+    /// 再断开——修复前依赖树无 rustls crypto provider，connect_async 对
+    /// wss:// 走默认 ClientConfig::builder() 在 rustls crypto/mod.rs panic
+    /// （叠加 release panic=abort 即 UAT 实机全进程闪退）；修复后本路径
+    /// 必须返回分类 Err 而非 panic。
+    ///
+    /// 载荷关键「先读后断」：accept 后立即 drop 会先于 ClientHello 到达
+    /// 触发连接层 Io 错误，绕开 TLS 配置构造；死端口（:1）更不行——TCP
+    /// 先拒到不了 TLS 分支（诊断原文）。readable()+try_read 等到首块
+    /// 数据（ClientHello 已抵达 = 确定进入 TLS 分支）后才断开。
+    #[tokio::test]
+    async fn test_connection_tls_branch_classified_err_not_panic() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                // 读至首字节（ClientHello 抵达）再断开——TLS 握手中 EOF。
+                loop {
+                    if socket.readable().await.is_err() {
+                        break;
+                    }
+                    match socket.try_read(&mut [0u8; 1]) {
+                        Ok(_) => break,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                        Err(_) => break,
+                    }
+                }
+                drop(socket);
+            }
+        });
+
+        let err = probe_connection(&format!("https://127.0.0.1:{port}"), "phc_k")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err.code, "unreachable" | "handshake_rejected" | "timeout"),
+            "TLS 分支须返回分类 Err（实得 {code}）",
+            code = err.code
+        );
+    }
 }
 
