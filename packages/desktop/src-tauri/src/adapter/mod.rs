@@ -75,10 +75,9 @@ const ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
 /// （chat-room.ts:52）——字符串常量直发，禁运行时对象序列化构造。
 const PING: &str = r#"{"v":1,"type":"ping"}"#;
 
-/// 通知钩子载荷：仅实时帧（EmitMessage）触发——两流分离不变量 D-61/D-63。
-/// 05-05 将其接线到真实通知线程（winrt-toast 按频道分组）；本 plan 以注入
-/// 回调 + 双计数器测试锁定分流语义（文件所有权与 05-03 通知层解耦）。
-#[allow(dead_code)] // 字段由 05-05 通知线程消费（当前消费者为注入钩子测试/占位 no-op）
+/// 实时帧载荷（EmitMessage 动作路径——通知触发的唯一消息流，两流分离
+/// 不变量 D-61/D-63）。lib.rs 的真实钩子消费：should_notify 决策矩阵 →
+/// NotifyCmd::Show（winrt-toast 按频道分组）。
 #[derive(Debug, Clone)]
 pub struct RealtimeMessage {
     pub channel_id: String,
@@ -92,7 +91,6 @@ pub struct RealtimeMessage {
 /// ——两流分离不变量 D-61/D-63（EmitHistory 结构性不可达）。lib.rs 的真实
 /// 钩子消费本枚举：Realtime → should_notify 决策矩阵 → NotifyCmd::Show；
 /// Answered → NotifyCmd::Remove（通知中心不残留已处置事项）。
-#[allow(dead_code)] // Answered 变体由 05-05 Task 3 的 EmitAnswered 分派臂消费
 #[derive(Debug, Clone)]
 pub enum NotifyEvent {
     /// 实时帧（EmitMessage 动作路径——通知触发的唯一消息流）。
@@ -524,7 +522,8 @@ impl<E: Effects> Runtime<E> {
             }
             Action::EmitAnswered { frame } => {
                 // answered 原位更新（不新增条目，D-17）；
-                // D-69 通知移除闭环：Task 3 GREEN 在此追加 NotifyEvent::Answered。
+                // D-69 通知移除闭环：answered 帧路径追加移除事件（该消息曾
+                // 弹过通知则移除；未弹过则 remove_grouped_tag 幂等无害）。
                 self.buffer.lock().unwrap().apply_answered(&frame);
                 self.effects.emit(
                     "ph://answered",
@@ -533,6 +532,10 @@ impl<E: Effects> Runtime<E> {
                         frame: &frame,
                     },
                 );
+                (self.notify_hook)(NotifyEvent::Answered {
+                    channel_id: self.channel_id.clone(),
+                    wid: frame.wid.clone(),
+                });
             }
             Action::EmitError { error } => {
                 self.effects.emit(

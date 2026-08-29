@@ -88,17 +88,74 @@ pub fn run() {
 
             // ---- 共享状态（commands/托盘/通知钩子同一数据源，无快照漂移）----
             let shared_cfg = Arc::new(Mutex::new(cfg.clone()));
+            let shared_focus = Arc::new(Mutex::new(UiFocusState::default()));
             app.manage(commands::AppState {
                 config: Arc::clone(&shared_cfg),
                 path: config::config_path_or_default(),
-                notify_tx,
-                focus: Arc::new(Mutex::new(UiFocusState::default())),
+                notify_tx: notify_tx.clone(),
+                focus: Arc::clone(&shared_focus),
             });
 
             // ---- ChannelManager：就绪即连（D-60/D-64）----
-            // 通知钩子占位 no-op（RED 结构态）：Task 3 GREEN 在此接线真实
-            // 决策矩阵（WINDOWS.md #10 追踪）。
-            let notify_hook: Arc<dyn Fn(NotifyEvent) + Send + Sync> = Arc::new(|_e| {});
+            // 真实通知钩子（05-05 Task 3，仅实时帧可达——两流分离不变量由
+            // adapter 分派层结构性锁定）：should_notify 决策矩阵 →
+            // NotifyCmd::Show；Answered → NotifyCmd::Remove（D-69 闭环）。
+            let app_for_hook = app.handle().clone();
+            let cfg_for_hook = Arc::clone(&shared_cfg);
+            let focus_for_hook = Arc::clone(&shared_focus);
+            let notify_tx_for_hook = notify_tx.clone();
+            let notify_hook: Arc<dyn Fn(NotifyEvent) + Send + Sync> = Arc::new(
+                move |event: NotifyEvent| match event {
+                    NotifyEvent::Realtime(msg) => {
+                        // 决策矩阵输入采集（决策时刻实时读——无快照漂移）。
+                        // 窗口可见 = is_visible 且未最小化（最小化即不在看，
+                        // D-65「正在看不打扰」按意图读法）。
+                        let window_visible = app_for_hook
+                            .get_webview_window("main")
+                            .map(|w| {
+                                w.is_visible().unwrap_or(false)
+                                    && !w.is_minimized().unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        let (dnd, muted, channel_name) = {
+                            let cfg = cfg_for_hook.lock().unwrap();
+                            let ch = cfg.channels.iter().find(|c| c.id == msg.channel_id);
+                            (
+                                cfg.dnd,
+                                ch.map(|c| c.muted).unwrap_or(false),
+                                ch.map(|c| c.name.clone()).unwrap_or_default(),
+                            )
+                        };
+                        let current =
+                            focus_for_hook.lock().unwrap().current_channel.clone();
+                        if notify::should_notify(
+                            window_visible,
+                            current.as_deref(),
+                            &msg.channel_id,
+                            muted,
+                            dnd,
+                        ) {
+                            // 文案组装（make_title/summarize 150 截断）在通知
+                            // 线程内完成（05-03）；本处只传原始 title/text
+                            //——Channel Key 结构性不进通知路径（T-05-03-02）。
+                            let _ = notify_tx_for_hook.send(notify::NotifyCmd::Show {
+                                channel_id: msg.channel_id.clone(),
+                                channel_name,
+                                wid: msg.wid.clone(),
+                                title: msg.title.clone(),
+                                text: msg.text.clone(),
+                                priority: notify::Priority::from_param(&msg.priority)
+                                    .unwrap_or(notify::Priority::Normal),
+                            });
+                        }
+                    }
+                    NotifyEvent::Answered { channel_id, wid } => {
+                        // D-69：通知中心不残留已处置事项（幂等——未弹过无害）。
+                        let _ = notify_tx_for_hook
+                            .send(notify::NotifyCmd::Remove { channel_id, wid });
+                    }
+                },
+            );
             let manager = ChannelManager::new(
                 cfg.server.clone(),
                 notify_hook,

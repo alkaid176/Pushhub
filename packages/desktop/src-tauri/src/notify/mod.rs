@@ -147,7 +147,13 @@ pub fn should_notify(
     muted: bool,
     dnd: bool,
 ) -> bool {
-    todo!("05-05 Task 3 GREEN：决策矩阵实现")
+    if muted || dnd {
+        return false; // D-70：静音/勿扰完全不出
+    }
+    if window_visible && current_channel == Some(msg_channel) {
+        return false; // D-65：正在看不打扰
+    }
+    true
 }
 
 /// 专用通知线程（Pitfall 5：ToastManager !Send——只存在于本函数体内）。
