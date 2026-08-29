@@ -59,3 +59,53 @@ PH_SMOKE_URL=https://pushhub.snake160220.workers.dev PH_ADMIN_KEY=<secret> node 
 | 0.1.11 | 2026-08-27 | https://pushhub.dyun.org（自定义域名入口） | 05b89819-f36a-4884-b96a-a02432cd1d2e | ✅ SMOKE OK，端到端延迟 384ms（Phase 3 管理页上线：/admin.html + /admin.js 静态资产首次公网分发（D-37/D-38，登录屏障/频道 CRUD/多 Send Key/重置踢连/删除/历史排障全功能）+ 五条 Admin API（send-keys POST/DELETE、reset-channel-key、DELETE 频道、messages keyset 翻页——D-35 参数化路由完结）。SC4 标记头证据：`/admin.html` 200 且无 `x-ph-worker`（资产命中零 Worker 请求）vs `/api/send` 401 反例带 `x-ph-worker: 1`（stampMarker 对照法）；`/` 与 `/admin.html` 各恰一处 `pushhub.js?v=0.1.11`（构建期注入双页生产实证）。normalize 生产实证：`GET /api/admin/channels` 列出 10 个频道全部含 sendKeys 数组结构——8 个 smoke- 前缀旧格式冒烟频道（0.1.0~0.1.10 各版遗留）经 normalizeIdRecord 兼容列出，migrate-on-write 零破坏生产证据；非 smoke 频道 2 个（uat-/chaos-sc2- 前缀）完整保留。冒烟 sendKeys[0].key 新取值路径（03-01 schema 演进联动）生产首次实跑全绿。回归：server 84/84 + web-sdk 单测 86/86 + E2E 21/21（含 D-41 全链路 journey——九步单 test 串联）全绿） |
 | 0.1.12 | 2026-08-28 | https://pushhub.dyun.org（自定义域名入口） | 68251efb-2d2a-4e94-9af2-1106f53475cf | ✅ SMOKE OK，端到端延迟 279ms（Phase 3 code review 修复上线：CR-01 KV `id:` 读-改-写竞态消除——`sk:` 每 Key 独立记录成权威源、吊销=删单键、`id:` 降级频道级低频写；WR-01 DO purge 后幂等重建空表（60s 缓存窗口残留流量不再裸 500）；WR-02 旧 Key 重挂窗口闭合——DO meta 表密钥代际 + WS 升级比对 + W-1 接线修复（admin.ts kick-all 转发补 `X-PH-Channel-Key`，代际机制从失活转全链路生效）；WR-03 管理页历史迟到响应对象同一性守卫；WR-04 admin 路由 try/catch 回落 D-06 500 信封；WR-05 损坏 `id:` 记录跳过。SC4 标记头证据：`/admin.html` 200 且无 `x-ph-worker` vs `/api/send` 401 带 `x-ph-worker: 1`；`/` 与 `/admin.html` 各恰一处 `pushhub.js?v=0.1.12`。CR-01 生产实证：`GET /api/admin/channels` 200 列出 10 频道全部含 sendKeys 数组（sk: 现扫 + id: 并集路径生产首跑）。回归：server 86/86（含 WR-02 代际接线回归测试——旧代际 DO 直连 401/新代际 101）+ web-sdk 单测 86/86 + E2E 21/21 全绿。4 项 Info 级 finding 留 `/gsd-secure-phase 3` 评估（03-REVIEW-FIX.md）） |
 | 0.1.13 | 2026-08-28 | https://pushhub.dyun.org（自定义域名入口） | f6d3fa2b-1957-4c20-8fbb-c1aae37656db | ✅ SMOKE OK，端到端延迟 284ms（Phase 4 测试页 + 回调接收器上线：`/test.html` + `/test.js` 五区块静态资产首次公网分发（ADM-04/D-55——连接配置/构造发送/实时流回复/验签器/失败查询，viewer 轻量定位不动）；`scripts/callback-receiver.mjs` 验签参考实现（D-57——三步验签 + DUPLICATE 幂等标记 + `--json-log` JSONL 落盘）；smoke.mjs 增回复链步骤（ack + answered 帧 wid/by/content 逐字段断言）生产首跑绿。SC4 标记头证据：`/test.html` 200 且无 `x-ph-worker`（资产命中零 Worker 请求）vs `/api/send` 401 带 `x-ph-worker: 1`；`/test.html` 恰一处 `pushhub.js?v=0.1.13`（构建期注入扩展至第三页首次生产生效）；`/pushhub.js` 82593 字节与本地构建逐字节一致。SC5 人工验收 **approved**（2026-08-28）：用户经测试页发"部署完成通知"→ 人工点"确认上线" → callback-receiver 打印验签 OK 续行——"通知→确认→续行"真实自动化场景闭环（验收专用频道 sc5-acceptance，验收后可删）。回归：server 119/119 + web-sdk 单测 102/102 + E2E 26/26（含 test-page 五用例：全流程 receiver 恰一次 POST 验签 ok + D-49 五字段 / 消毒攻击样本无执行痕迹 / 失败查询空态 / 验签器三步 PASS + 篡改 FAIL / receiver 五路径缺头-超窗-伪造-合法-重复）全绿 |
+
+## 桌面端（Windows）分发
+
+桌面端为**本地安装包形态**（无服务器部署）：NSIS 安装器 + 便携版双形态（D-77）。版本线独立于上述服务端版本——`packages/desktop/package.json` 与 `packages/desktop/src-tauri/tauri.conf.json` 的 `version` 同步维护。
+
+### 版本号规则（桌面端）
+
+- 桌面端版本线自 **0.1.0** 起（与服务端 0.1.x 相互独立，不联动）。
+- **每次发布桌面安装包前，补丁位 +1**（0.1.0 → 0.1.1 → …），两个文件（package.json / tauri.conf.json）同步修改。
+- 每次发布在下方「桌面端发布记录」表登记一行（版本、产物、E2E 回归结果）。
+
+### 构建命令与产物路径
+
+```bash
+cd packages/desktop
+pnpm exec tauri build                 # ① NSIS 安装器 + 裸 exe（release）
+node scripts/make-portable.mjs        # ② 便携版整理（exe + README → dist/portable/）
+```
+
+| 形态 | 产物路径 | 说明 |
+|------|---------|------|
+| NSIS 安装器 | `packages/desktop/src-tauri/target/release/bundle/nsis/PushHub_<版本>_x64-setup.exe` | 简体中文安装向导、currentUser 安装（免管理员）、无语言选择页；安装器登记 AUMID，通知开箱可用 |
+| 便携版 | `packages/desktop/dist/portable/`（pushhub-desktop.exe + README-portable.txt） | 解压即用；首次运行自行注册 AUMID（app.pushhub.desktop） |
+
+- 图标源：`packages/desktop/app-icon.png`（1024x1024，`scripts/gen-icon.mjs` 生成）；`pnpm exec tauri icon app-icon.png` 重出全套（正式全套含 icon.ico 于 `src-tauri/icons/`）。
+- 首次构建会自动下载 NSIS 工具链（GitHub 网络依赖——失败时重试或配置代理）。
+- release 产物无调试测试钩子：测试钩子命令未引入（invoke 面恰 12 项生产命令，无 `cfg(debug_assertions)` 门控的测试命令——源断言 grep 零命中）。
+
+### 发布前回归（自动化）
+
+- `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`（146 项）
+- `pnpm --filter @pushhub/desktop exec playwright test`（六条 E2E：tracer / render / reply-chain / reconnect / close-window / wizard）
+
+### 安装实机人工验收清单（OS 壳层——阶段末 UAT 批量复核）
+
+对应 `.planning/phases/05-windows-tauri-2/05-VALIDATION.md` Manual-Only 表，双形态（安装版 + 便携版）各跑一遍：
+
+| # | 项目 | 步骤 | 关联 |
+|---|------|------|------|
+| ① | SC2 通知三级定位 | 向已配置频道发消息 → 观察横幅（high 带声 / normal 无声）→ 点击通知正文 → 确认窗口聚焦 + 切换到对应频道 + 滚动到消息并高亮渐隐 | SC2/WIN-02 |
+| ② | answered 通知移除 | 弹通知后在窗口内回复 → 确认通知中心该条消失 | D-69 |
+| ③ | 托盘行为 | 左键托盘 → 窗口显隐切换；悬停 → tooltip「N 在线 / M 重连中」；右键 → 显示/勿扰/退出三项；退出 → 进程真正结束 | WIN-01/D-74 |
+| ④ | D-71 首关提示 | 首次点窗口 X → 一次性提示出现；确认后再关不重现 | D-71 |
+| ⑤ | 安装/便携开箱 | NSIS：中文向导、currentUser 安装、开始菜单/卸载项正常；便携版：解压双击直接运行 | D-77 |
+
+## 桌面端发布记录
+
+| 版本 | 时间 (UTC) | 产物 | 回归结果 |
+|------|-----------|------|---------|
+| 0.1.0 | 2026-08-29 | NSIS `PushHub_0.1.0_x64-setup.exe` + `dist/portable/` | cargo test 146/146 + 桌面 E2E 6/6（tracer/render/reply-chain/reconnect/close-window/wizard）；实机人工项（上表 ①-⑤）待阶段末 UAT 批量复核 |
