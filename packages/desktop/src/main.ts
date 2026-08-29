@@ -24,6 +24,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as state from "./state";
 import { initSidebar, type SidebarView } from "./components/sidebar";
 import { initMessageList, type MessageListView } from "./components/message-list";
+import { initReplyBox, type ReplyBoxView } from "./components/reply-box";
+import { mountWizard } from "./components/wizard";
+import { mountSettings } from "./components/settings";
+import { initFirstCloseHint } from "./setup";
 
 // ---- 事件载荷形态（Rust serde 序列化；flatten 帧 = channel_id + 帧字段）----
 
@@ -61,6 +65,7 @@ const channelNameEl = document.getElementById("current-channel-name") as HTMLEle
 
 let sidebar: SidebarView;
 let messages: MessageListView;
+let replyBox: ReplyBoxView;
 
 /** 主区头部：当前频道名 + 连接状态（#status 同时是 tracer E2E 的锚点）。 */
 function renderHeader(): void {
@@ -77,6 +82,7 @@ async function switchChannel(id: string): Promise<void> {
   messages.rebuild(state.currentMessages());
   messages.setSelected(null);
   renderHeader();
+  replyBox?.update(); // 选中态随频道切换清空——回复区收起
   await invoke("set_current_channel", { channelId: id }).catch(() => {
     // 焦点上报失败不影响展示（决策矩阵退化按非当前频道处理）。
   });
@@ -91,11 +97,19 @@ async function switchChannel(id: string): Promise<void> {
   }
 }
 
-/** 消息条目点击 → 选中（回复区绑定；05-06 Task 2 接线回复区更新）。 */
+/** 消息条目点击 → 选中（回复区绑定/取消）。 */
 function onClickMessage(wid: string): void {
   const selected = state.store.selectedWid === wid ? null : wid;
   state.selectMessage(selected);
   messages.setSelected(selected);
+  replyBox?.update();
+}
+
+/** 向导保存回调（D-73 首配与添加频道共用）：入列 → 切换到新频道。 */
+function onWizardSaved(id: string, name: string): void {
+  state.addChannel(id, name);
+  sidebar.render();
+  void switchChannel(id);
 }
 
 /** ph://locate 三级定位（D-67）：显示+聚焦窗口 → 切换频道 → 滚动高亮。 */
@@ -150,6 +164,8 @@ function bindEvents(): void {
     });
     if (msg !== null && p.channel_id === state.store.current) {
       messages.updateAnswered(msg);
+      // 选中消息被处置 → 回复区冻结（RPL-05）。
+      if (state.store.selectedWid === p.wid) replyBox?.update();
     }
   });
 
@@ -167,20 +183,26 @@ async function bootstrap(): Promise<void> {
   sidebar = initSidebar({
     onSelect: (id) => void switchChannel(id),
     onAddChannel: () => {
-      // 05-06 Task 2：向导表单挂载（D-73 复用同一表单）。
+      mountWizard("add", { onSaved: onWizardSaved, onClose: () => {} });
     },
     onOpenSettings: () => {
-      // 05-06 Task 2：设置面板挂载（D-72/D-70/D-74）。
+      mountSettings(); // D-74：设置在主窗口内，不进托盘菜单
     },
   });
   messages = initMessageList(onClickMessage);
+  replyBox = initReplyBox(() => messages.setSelected(null));
+  initFirstCloseHint(); // D-71：listener 先于就绪门注册
 
   sidebar.render();
   messages.rebuild(state.currentMessages());
   renderHeader();
+  replyBox.update();
 
   if (state.store.current !== null) {
     await switchChannel(state.store.current);
+  } else {
+    // 首启无配置（D-73）：内嵌向导——验证连通 → 保存即进入主界面。
+    mountWizard("initial", { onSaved: onWizardSaved, onClose: () => {} });
   }
 
   bindEvents();
