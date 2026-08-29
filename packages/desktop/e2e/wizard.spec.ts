@@ -1,8 +1,10 @@
 /**
- * WIN-06 向导全流程 E2E（05-07 Task 2）：首启无配置（PH_CONFIG_PATH 指向
- * 不存在文件）→ 内嵌向导呈现 → 失败路径（不可达地址 + 错误密钥被拒、保存
- * 保持禁用、无配置持久化）→ 成功路径（验证通过 → 保存并进入 → 主界面
- * online）→ 复用同一表单添加至 8 频道 → 第 9 个添加在 UI 层被拒
+ * WIN-06 向导全流程 E2E（05-07 Task 2；05-08 Task 2 增 TLS 护栏）：首启无配置
+ * （PH_CONFIG_PATH 指向不存在文件）→ 内嵌向导呈现 → 失败路径（不可达地址 +
+ * 错误密钥被拒、保存保持禁用、无配置持久化）→ 成功路径（验证通过 → 保存并
+ * 进入 → 主界面 online）→ TLS 失败路径（https:// 地址验证连通出内联反馈而非
+ * 崩溃——G-05-5 护栏，BASE 恒 http:// 是该 bug 逃过自动化的通道，此用例永久
+ * 钉住 wss:// 入口）→ 复用同一表单添加至 8 频道 → 第 9 个添加在 UI 层被拒
  * （channel_limit_reached 上限提示，MAX_CHANNELS=8）。
  *
  * 表单 DOM 复用 05-06 mountWizard（#overlay .panel-card 三输入 + 验证/保存
@@ -18,6 +20,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 // @ts-expect-error -- 工作区未装 @types/node
 import { join } from "node:path";
+// @ts-expect-error -- 工作区未装 @types/node
+import * as net from "node:net";
 
 /** 三输入选择器（placeholder 定位——05-06 mountWizard 定型的表单 DOM）。 */
 const SEL_SERVER = '#overlay input[placeholder="https://pushhub.dyun.org"]';
@@ -50,6 +54,24 @@ async function waitFeedback(page: Page, part: string): Promise<void> {
   );
 }
 
+/**
+ * 等待内联反馈命中候选文案之一（数组任一子串命中即通过）——G-05-5 TLS 护栏
+ * 用例专用：错误分类按错误对象落桶，候选覆盖分类映射与时序差异（正则字符串
+ * 原样传入 waitFeedback 的纯子串匹配永不命中，故独立实现）。
+ */
+async function waitFeedbackAny(page: Page, parts: string[]): Promise<void> {
+  await page.waitForFunction(
+    (candidates: string[]) => {
+      const el = document.querySelector("#overlay .form-feedback");
+      if (el === null || el.hasAttribute("hidden")) return false;
+      const text = el.textContent ?? "";
+      return candidates.some((p) => text.includes(p));
+    },
+    parts,
+    { timeout: 15_000 },
+  );
+}
+
 /** 等待向导关闭（保存成功路径——overlay 隐藏即表单销毁）。 */
 async function waitOverlayHidden(page: Page): Promise<void> {
   await page.waitForFunction(
@@ -59,7 +81,7 @@ async function waitOverlayHidden(page: Page): Promise<void> {
   );
 }
 
-test("wizard: 首启向导失败/成功双路径 + 添加至 8 频道 + 第 9 个 UI 层拒绝", async ({ request }) => {
+test("wizard: 首启向导失败/成功双路径 + TLS https 失败路径 + 添加至 8 频道 + 第 9 个 UI 层拒绝", async ({ request }) => {
   test.setTimeout(180_000);
 
   const channel = await createChannel(request);
@@ -104,6 +126,36 @@ test("wizard: 首启向导失败/成功双路径 + 添加至 8 频道 + 第 9 �
       null,
       { timeout: 30_000 },
     );
+
+    // ---- 失败路径 ③（TLS 分支，G-05-5 护栏）：https:// 地址「验证连通」出内联
+    // 错误反馈而非崩溃——修复前 dev 模式 task panic 反馈永不出现（用例超时响亮
+    // 失败），release 形态则全进程 abort。BASE 恒 http:// 是该 bug 逃过自动化的
+    // 通道，本用例让 wss:// 入口从此有常驻 E2E 哨兵。裸 TCP 先收 ClientHello 再
+    // 断开（与 cargo 护栏测试同款「先读后断」）；TLS 握手 EOF → 主候选「服务端
+    // 拒绝连接」（handshake_rejected），「网络不可达」覆盖 RST 时序差异。落位
+    // add 模式段（有取消按钮——首启 initial 模式无取消，做不了关表单存活断言）。----
+    const tlsServer = net.createServer(
+      (socket: { once(ev: "data", cb: (chunk: unknown) => void): void; destroy(): void }) => {
+        socket.once("data", () => socket.destroy()); // 先读后断：ClientHello 已发出
+      },
+    );
+    await new Promise<void>((resolve) => tlsServer.listen(0, "127.0.0.1", resolve));
+    const tlsPort = (tlsServer.address() as { port: number }).port;
+    try {
+      await page.locator("#btn-add-channel").click();
+      await overlay.waitFor({ timeout: 5_000 });
+      await expect(overlay.locator(".panel-title")).toHaveText("添加频道");
+      await fillForm(page, "TLS 护栏", channel.channelKey, `https://127.0.0.1:${tlsPort}`);
+      await clickVerify(page);
+      await waitFeedbackAny(page, ["服务端拒绝连接", "网络不可达"]);
+      // 应用存活断言：invoke 返回后点「取消」（add 模式特有——取消与验证同为
+      // 非 primary，须文案定位）关表单，overlay 隐藏且频道数保持 1。
+      await page.locator("#overlay .form-actions button", { hasText: "取消" }).click();
+      await waitOverlayHidden(page);
+      await expect(page.locator("#channel-list .channel-item")).toHaveCount(1);
+    } finally {
+      await new Promise<void>((resolve) => tlsServer.close(() => resolve()));
+    }
 
     // ---- 复用同一表单添加频道至 8（同一 Channel Key——服务端群聊多连接语义）----
     for (let i = 2; i <= 8; i++) {
