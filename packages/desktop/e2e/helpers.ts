@@ -70,10 +70,14 @@ export async function createChannel(request: APIRequestContext): Promise<Channel
   };
 }
 
+/**
+ * 发送 webhook 消息（POST /api/send Bearer sendKey）——载荷面覆盖
+ * options/callback_url（05-06 reply-chain E2E：快捷回复链构造）。
+ */
 export async function sendMessage(
   request: APIRequestContext,
   sendKey: string,
-  payload: { title?: string; text: string },
+  payload: { title?: string; text: string; options?: string[]; callback_url?: string },
 ): Promise<{ id: string; seq: number }> {
   const resp = await request.post(`${BASE}/api/send`, {
     headers: {

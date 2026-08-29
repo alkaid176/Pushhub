@@ -54,11 +54,39 @@ export function initReplyBox(onSelectionCleared: () => void): ReplyBoxView {
 
     root.replaceChildren(head);
 
-    // answered：快捷按钮与输入全部冻结（RPL-05）。
+    // answered：快捷按钮与输入全部冻结（disabled——防止重复处置，RPL-05；
+    // 服务端 already_replied 拒绝之外的客户端第二道防线）。
     if (message.answered) {
+      const frozenOptions = (message.options ?? []).filter((o) => o !== "").slice(0, QUICK_OPTION_LIMIT);
+      if (frozenOptions.length > 0) {
+        const group = document.createElement("div");
+        group.className = "quick-options";
+        for (const option of frozenOptions) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "quick-option";
+          btn.textContent = option;
+          btn.disabled = true;
+          group.append(btn);
+        }
+        root.append(group);
+      }
+      const frozenRow = document.createElement("div");
+      frozenRow.className = "reply-input-row";
+      const frozenInput = document.createElement("textarea");
+      frozenInput.className = "reply-input";
+      frozenInput.placeholder = "该消息已处置——回复冻结";
+      frozenInput.disabled = true;
+      const frozenSend = document.createElement("button");
+      frozenSend.type = "button";
+      frozenSend.className = "reply-send";
+      frozenSend.textContent = "发送";
+      frozenSend.disabled = true;
+      frozenRow.append(frozenInput, frozenSend);
+      root.append(frozenRow);
       const note = document.createElement("div");
       note.className = "reply-answered-note";
-      note.textContent = "该消息已处置——快捷选项与输入已冻结";
+      note.textContent = "该消息已处置——回复冻结";
       root.append(note);
       root.hidden = false;
       return;
