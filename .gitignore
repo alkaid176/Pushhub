@@ -32,3 +32,5 @@ packages/desktop/src-tauri/target/
 # desktop Playwright E2E 运行产物
 packages/desktop/test-results/
 packages/desktop/playwright-report/
+# tauri-build 生成产物（gen/schemas）
+packages/desktop/src-tauri/gen/
