@@ -512,13 +512,19 @@ mod tests {
         mgr.spawn_channel(&cfg("ch2")).unwrap();
         mgr.remove_channel("ch1").unwrap();
         mgr.remove_channel("ch2").unwrap();
-        // 假任务异步记录 SpawnInputs.server——有界轮询到两条再断言顺序。
+        // 假任务异步记录 SpawnInputs.server——有界轮询到两条再断言。
+        // push 发生在 spawn 出的异步任务里，tokio 多线程调度不保证任务执行顺序
+        // （全套并发跑时 ch2 任务可能先于 ch1 执行），语义是「两条基址各自正确」，
+        // 故集合断言而非顺序断言。
         soon(|| servers.lock().unwrap().len() == 2).await;
-        assert_eq!(
-            *servers.lock().unwrap(),
-            vec!["http://old".to_string(), "https://pushhub.dyun.org".to_string()],
-            "set_server 后续 spawn 以新地址为基址"
-        );
+        let mut seen = servers.lock().unwrap().clone();
+        seen.sort();
+        let mut expected = vec![
+            "http://old".to_string(),
+            "https://pushhub.dyun.org".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(seen, expected, "set_server 后续 spawn 以新地址为基址");
     }
 
     /// send_raw：出站直发帧送达频道任务（outbox 接收端捕获）；未知频道
