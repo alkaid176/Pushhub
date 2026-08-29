@@ -89,7 +89,7 @@ node scripts/make-portable.mjs        # ② 便携版整理（exe + README → d
 
 ### 发布前回归（自动化）
 
-- `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`（146 项）
+- `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`（147 项，05-08 起含 TLS 分支护栏）
 - `pnpm --filter @pushhub/desktop exec playwright test`（六条 E2E：tracer / render / reply-chain / reconnect / close-window / wizard）
 
 ### 安装实机人工验收清单（OS 壳层——阶段末 UAT 批量复核）
@@ -109,3 +109,4 @@ node scripts/make-portable.mjs        # ② 便携版整理（exe + README → d
 | 版本 | 时间 (UTC) | 产物 | 回归结果 |
 |------|-----------|------|---------|
 | 0.1.0 | 2026-08-29 | NSIS `PushHub_0.1.0_x64-setup.exe` + `dist/portable/` | cargo test 146/146 + 桌面 E2E 6/6（tracer/render/reply-chain/reconnect/close-window/wizard）；实机人工项（上表 ①-⑤）待阶段末 UAT 批量复核 |
+| 0.1.1 | 2026-08-29 | NSIS `PushHub_0.1.1_x64-setup.exe` + `dist/portable/` | cargo test 147/147（+1 TLS 分支护栏：裸 TcpListener 先收 ClientHello 再断开 → 分类 Err 不 panic）+ 桌面 E2E 6/6（含 wizard 新增 https:// 失败路径用例——TLS 分支常驻哨兵）；**G-05-5 修复**：rustls ring provider——修复前向导对 https:// 服务端地址点「验证连通」（及任何配置 https:// 服务端频道的 wss:// 主连接）rustls 无 crypto provider panic，release `panic=abort` 下全进程静默闪退；**UAT Test 5 实机复测待验**：验证连通不闪退 + D-71 首关提示 |
