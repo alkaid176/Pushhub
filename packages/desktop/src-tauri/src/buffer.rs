@@ -27,6 +27,7 @@ use crate::protocol::{AnsweredFrame, MessageFrame};
 pub const BUFFER_CAP: usize = 500;
 
 /// snapshot 全量导出（窗口重开重建的数据源，D-60）。
+#[allow(dead_code)] // 生产消费者：manager.snapshot → 05-05 窗口重建命令（测试已锁定语义）
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BufferSnapshot {
     /// 当前保留消息（按 seq 升序——插入序在补拉/实时交叠时可能乱序，
@@ -68,11 +69,13 @@ impl<T> Buffer<T> {
     }
 
     /// 当前保留条数。
+    #[allow(dead_code)] // 测试断言 + 05-05 窗口重建命令消费
     pub fn len(&self) -> usize {
         self.deque.len()
     }
 
     /// 是否为空。
+    #[allow(dead_code)] // 05-06 UI 空态判断
     pub fn is_empty(&self) -> bool {
         self.deque.is_empty()
     }
@@ -80,6 +83,7 @@ impl<T> Buffer<T> {
 
 impl Buffer<MessageFrame> {
     /// 全量快照：消息按 seq 升序 + 淘汰计数 + 最旧保留 seq。
+    #[allow(dead_code)] // 生产消费者：manager.snapshot → 05-05 窗口重建命令（测试已锁定语义）
     pub fn snapshot(&self) -> BufferSnapshot {
         let mut messages: Vec<MessageFrame> = self.deque.iter().cloned().collect();
         messages.sort_by_key(|m| m.seq);

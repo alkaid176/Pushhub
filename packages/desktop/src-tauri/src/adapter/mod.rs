@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher as _};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -50,7 +50,10 @@ use tauri::{AppHandle, Emitter};
 use crate::buffer::Buffer;
 use crate::config::ChannelConfig;
 use crate::machine::{Action, CloseReason, Event, Machine, Status, TimerKind};
-use crate::protocol::{parse_server_frame, ClientFrame, MessageFrame, SyncFrame, PROTOCOL_VERSION};
+use crate::protocol::{parse_server_frame, ClientFrame, SyncFrame, PROTOCOL_VERSION};
+
+/// 多频道生命周期管理（Task 3，D-64/D-65）。
+pub mod manager;
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type WsSink = SplitSink<WsStream, Message>;
@@ -75,6 +78,7 @@ const PING: &str = r#"{"v":1,"type":"ping"}"#;
 /// 通知钩子载荷：仅实时帧（EmitMessage）触发——两流分离不变量 D-61/D-63。
 /// 05-05 将其接线到真实通知线程（winrt-toast 按频道分组）；本 plan 以注入
 /// 回调 + 双计数器测试锁定分流语义（文件所有权与 05-03 通知层解耦）。
+#[allow(dead_code)] // 字段由 05-05 通知线程消费（当前消费者为注入钩子测试/占位 no-op）
 #[derive(Debug, Clone)]
 pub struct RealtimeMessage {
     pub channel_id: String,
@@ -584,6 +588,7 @@ fn default_random(seed: u64) -> Box<dyn FnMut() -> f64 + Send> {
 // Runtime::apply 分派）；notify 计数经注入钩子（双计数器）。
 
 /// 测试副作用记录器（内存记录，无 Tauri/WS 依赖）。
+#[cfg(test)]
 #[derive(Default)]
 struct Recorder {
     sent: Vec<String>,
@@ -592,6 +597,7 @@ struct Recorder {
     writer: Option<UnboundedSender<Outbound>>,
 }
 
+#[cfg(test)]
 impl Effects for Recorder {
     fn set_writer(&mut self, writer: Option<UnboundedSender<Outbound>>) {
         self.writer = writer;
@@ -612,7 +618,8 @@ impl Effects for Recorder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{AnsweredFrame, FrameResult, HistoryFrame, ServerFrame};
+    use crate::protocol::{AnsweredFrame, FrameResult, HistoryFrame, MessageFrame, ServerFrame};
+    use std::sync::atomic::AtomicUsize;
 
     // ---- 帧构造 helpers（对齐 machine/tests 分工：绕过 parse 直接构造）----
 
