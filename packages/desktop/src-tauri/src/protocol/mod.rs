@@ -30,7 +30,7 @@ pub const RETENTION_KEEP: usize = 500;
 #[allow(dead_code)]
 pub const INITIAL_FETCH: usize = 50;
 
-/// D-11 sync 补拉 limit 缺省值（machine SendSync 动作消费，05-02 Task 2）。
+/// D-11 sync 补拉 limit 缺省值（machine SendSync 动作消费）。
 pub const SYNC_LIMIT_DEFAULT: u32 = 200;
 
 /// D-11 sync 补拉 limit 上限（一次拉不完以 has_more 翻页；服务端侧权威校验，
@@ -118,6 +118,7 @@ pub struct WsErrorFrame {
 /// v:1 reply 帧（客户端 → 服务端，04-01 D-45/D-46）。selected_option 与 text
 /// 恰提供其一（载荷恰一校验在发送侧命令层，域级校验在服务端 DO）；by 为
 /// 自报展示名，缺省不序列化（省略语义——键不出现即匿名回复，D-53）。
+#[allow(dead_code)] // 05-04 adapter reply() 公开方法 / 05-05 UI 回复面构造
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplyFrame {
     pub v: i64,
@@ -135,6 +136,7 @@ pub struct ReplyFrame {
 /// 客户端 → 服务端帧（v:1：ping/sync/reply）。ping 经字节常量直发（Pitfall 4：
 /// 键序反转即失配服务端 auto-response）、sync 经 SendSync 动作参数构造——
 /// serde 结构面当前仅 reply（untagged 单变体：序列化即内层帧形态）。
+#[allow(dead_code)] // 05-04 adapter reply() / 05-05 UI 回复面构造
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ClientFrame {

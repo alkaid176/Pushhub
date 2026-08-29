@@ -50,13 +50,10 @@ impl SeqDedup {
         self.last_seq
     }
 
-    /// 测试观测口：当前去重窗口内存条目数（有界性断言用）。
+    /// 测试观测口：当前去重窗口内存条目数（有界性断言用，对齐 dedup.ts size）。
+    #[allow(dead_code)] // 纯测试观测口（dedup.rs 内嵌测试的有界性断言消费）
     pub fn len(&self) -> usize {
         self.seen.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.seen.is_empty()
     }
 }
 

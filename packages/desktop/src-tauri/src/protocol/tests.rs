@@ -12,7 +12,7 @@
 use serde_json::Value;
 
 use super::{
-    parse_server_frame, AckFrame, AnsweredFrame, ClientFrame, FrameResult, ReplyFrame, ServerFrame,
+    parse_server_frame, AckFrame, ClientFrame, FrameResult, ReplyFrame, ServerFrame,
 };
 use crate::machine;
 use crate::machine::dedup;
