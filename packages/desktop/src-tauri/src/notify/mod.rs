@@ -135,6 +135,21 @@ pub fn should_suppress(dnd: bool, cmd: &NotifyCmd) -> bool {
     dnd && matches!(cmd, NotifyCmd::Show { .. })
 }
 
+/// D-65 通知触发决策矩阵（纯函数，05-05 Task 3）：
+///  - 窗口可见且当前频道即消息频道 → false（正在看不打扰）；
+///  - 频道静音或全局勿扰 → false（完全不出通知——2026-08-29 裁决，不做
+///    仅进通知中心）；
+///  - 其余 → true（窗口隐藏 / 可见他频道 / 未选频道均弹）。
+pub fn should_notify(
+    window_visible: bool,
+    current_channel: Option<&str>,
+    msg_channel: &str,
+    muted: bool,
+    dnd: bool,
+) -> bool {
+    todo!("05-05 Task 3 GREEN：决策矩阵实现")
+}
+
 /// 专用通知线程（Pitfall 5：ToastManager !Send——只存在于本函数体内）。
 ///
 /// 线程职责：AUMID 三档初始化 → 注册激活回调（解析 launch → emit
@@ -293,5 +308,25 @@ mod tests {
         assert_eq!(Priority::from_param("normal"), Some(Priority::Normal));
         assert_eq!(Priority::from_param("low"), Some(Priority::Low));
         assert_eq!(Priority::from_param("urgent"), None);
+    }
+
+    /// D-65 决策矩阵六条路径（05-05 Task 3，断言到布尔值）。
+    #[test]
+    fn decision_matrix_six_paths() {
+        // 1. 窗口可见 + 当前频道即消息频道 → 不弹（正在看不打扰）。
+        assert!(!should_notify(true, Some("ch1"), "ch1", false, false));
+        // 2. 窗口可见 + 其他频道 → 弹。
+        assert!(should_notify(true, Some("ch2"), "ch1", false, false));
+        // 3. 窗口隐藏（即使当前即消息频道）→ 弹。
+        assert!(should_notify(false, Some("ch1"), "ch1", false, false));
+        // 4. 频道静音 → 完全不出（窗口隐藏/可见他频道均不出，D-70）。
+        assert!(!should_notify(false, None, "ch1", true, false));
+        assert!(!should_notify(true, Some("ch2"), "ch1", true, false));
+        // 5. 全局勿扰 → 完全不出（2026-08-29 裁决：不做仅进通知中心）。
+        assert!(!should_notify(false, None, "ch1", false, true));
+        assert!(!should_notify(true, Some("ch1"), "ch1", false, true));
+        // 6. 正常路径：窗口隐藏/未选频道（向导态）/可见但未选 → 弹。
+        assert!(should_notify(false, None, "ch1", false, false));
+        assert!(should_notify(true, None, "ch1", false, false));
     }
 }

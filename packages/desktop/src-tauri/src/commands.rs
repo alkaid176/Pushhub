@@ -514,7 +514,7 @@ fn do_set_current_channel(state: &AppState, channel_id: Option<String>) {
 mod tests {
     use super::*;
     use crate::adapter::manager::{ChannelRunner, SpawnInputs};
-    use crate::adapter::RealtimeMessage;
+    use crate::adapter::NotifyEvent;
     use crate::machine::Event;
     use std::collections::HashMap;
     use std::path::Path;
@@ -593,7 +593,7 @@ mod tests {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let mgr = ChannelManager::new(
             "http://127.0.0.1:4911".to_string(),
-            Arc::new(|_m: RealtimeMessage| {}),
+            Arc::new(|_e: NotifyEvent| {}),
             stub_runner(
                 HashMap::from([("ch1".to_string(), Status::Online)]),
                 Arc::new(Mutex::new(Vec::new())),
@@ -818,7 +818,7 @@ mod tests {
     fn empty_runner() -> ChannelManager {
         ChannelManager::new(
             "http://127.0.0.1:4911".to_string(),
-            Arc::new(|_m: RealtimeMessage| {}),
+            Arc::new(|_e: NotifyEvent| {}),
             stub_runner(
                 HashMap::new(),
                 Arc::new(Mutex::new(Vec::new())),
@@ -835,7 +835,7 @@ mod tests {
         let servers = Arc::new(Mutex::new(Vec::new()));
         let mgr = ChannelManager::new(
             "http://old".to_string(),
-            Arc::new(|_m: RealtimeMessage| {}),
+            Arc::new(|_e: NotifyEvent| {}),
             stub_runner(HashMap::new(), Arc::clone(&servers), Arc::new(Mutex::new(Vec::new()))),
         );
 

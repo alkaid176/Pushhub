@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Listener, Manager};
 
 use adapter::manager::{production_runner, ChannelManager};
-use adapter::RealtimeMessage;
+use adapter::NotifyEvent;
 use commands::UiFocusState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -96,9 +96,9 @@ pub fn run() {
             });
 
             // ---- ChannelManager：就绪即连（D-60/D-64）----
-            // 通知钩子占位 no-op：两流分离语义已由 05-04 双计数器测试锁定；
-            // Task 3 在此接线真实决策矩阵（WINDOWS.md #10 追踪）。
-            let notify_hook: Arc<dyn Fn(RealtimeMessage) + Send + Sync> = Arc::new(|_msg| {});
+            // 通知钩子占位 no-op（RED 结构态）：Task 3 GREEN 在此接线真实
+            // 决策矩阵（WINDOWS.md #10 追踪）。
+            let notify_hook: Arc<dyn Fn(NotifyEvent) + Send + Sync> = Arc::new(|_e| {});
             let manager = ChannelManager::new(
                 cfg.server.clone(),
                 notify_hook,

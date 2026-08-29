@@ -88,6 +88,19 @@ pub struct RealtimeMessage {
     pub priority: String,
 }
 
+/// 通知钩子载荷：仅实时帧（EmitMessage）与 answered 移除（D-69）两条路径
+/// ——两流分离不变量 D-61/D-63（EmitHistory 结构性不可达）。lib.rs 的真实
+/// 钩子消费本枚举：Realtime → should_notify 决策矩阵 → NotifyCmd::Show；
+/// Answered → NotifyCmd::Remove（通知中心不残留已处置事项）。
+#[allow(dead_code)] // Answered 变体由 05-05 Task 3 的 EmitAnswered 分派臂消费
+#[derive(Debug, Clone)]
+pub enum NotifyEvent {
+    /// 实时帧（EmitMessage 动作路径——通知触发的唯一消息流）。
+    Realtime(RealtimeMessage),
+    /// answered 帧到达（EmitAnswered 动作路径）→ 通知移除闭环（D-69）。
+    Answered { channel_id: String, wid: String },
+}
+
 /// 连接 URL 构造（pushhub.ts:102-105 同构）。
 pub fn build_ws_url(server: &str, channel_key: &str) -> String {
     // http→ws 前缀替换：http:// → ws://、https:// → wss://（"http"→"ws" 后 s 保留）。
@@ -239,8 +252,9 @@ struct Runtime<E: Effects> {
     buffer: Arc<Mutex<Buffer>>,
     /// 状态共享单元（EmitStatus 写；manager statuses() 聚合读）。
     status: Arc<Mutex<Status>>,
-    /// 通知钩子（仅 EmitMessage 路径调用——两流分离 D-61/D-63）。
-    notify_hook: Box<dyn Fn(RealtimeMessage) + Send>,
+    /// 通知钩子（Realtime：仅 EmitMessage 路径——两流分离 D-61/D-63；
+    /// Answered：EmitAnswered 路径——D-69 通知移除闭环）。
+    notify_hook: Box<dyn Fn(NotifyEvent) + Send>,
 }
 
 /// 单频道接线（lib.rs/ChannelManager 对每个频道 spawn 一个，D-64 多频道多任务）。
@@ -262,7 +276,7 @@ pub async fn run_channel(
     channel: ChannelConfig,
     server: String,
     mut ready: watch::Receiver<bool>,
-    notify_hook: Box<dyn Fn(RealtimeMessage) + Send>,
+    notify_hook: Box<dyn Fn(NotifyEvent) + Send>,
     buffer: Arc<Mutex<Buffer>>,
     status: Arc<Mutex<Status>>,
     mut control: UnboundedReceiver<Event>,
@@ -492,7 +506,7 @@ impl<E: Effects> Runtime<E> {
                     },
                 );
                 self.buffer.lock().unwrap().push(message);
-                (self.notify_hook)(realtime);
+                (self.notify_hook)(NotifyEvent::Realtime(realtime));
             }
             Action::EmitHistory { frame } => {
                 // 补拉/首拉批次：只进缓冲与前端事件，绝不触发通知钩子（D-61）。
@@ -509,8 +523,8 @@ impl<E: Effects> Runtime<E> {
                 }
             }
             Action::EmitAnswered { frame } => {
-                // answered 原位更新（不新增条目，D-17）；通知移除由 05-05 在
-                // answered 帧路径接线——本处不触发 notify_hook。
+                // answered 原位更新（不新增条目，D-17）；
+                // D-69 通知移除闭环：Task 3 GREEN 在此追加 NotifyEvent::Answered。
                 self.buffer.lock().unwrap().apply_answered(&frame);
                 self.effects.emit(
                     "ph://answered",
@@ -730,20 +744,24 @@ mod tests {
 
     // ---- 分派层测试（Runtime<Recorder> + 真状态机驱动）----
 
-    /// 测试运行态：Recorder 副作用 + 注入计数钩子 + 共享缓冲/状态单元。
+    /// 测试运行态：Recorder 副作用 + 注入计数钩子（Realtime 计数 +
+    /// Answered 记录）+ 共享缓冲/状态单元。
     fn make_rt() -> (
         Runtime<Recorder>,
         Machine,
         Arc<AtomicUsize>,
+        Arc<Mutex<Vec<(String, String)>>>,
         Arc<Mutex<Buffer>>,
         Arc<Mutex<Status>>,
     ) {
         // 定时器事件入废通道（recv 端即弃——send 失败静默，无副作用面）。
         let (tx, _rx) = mpsc::unbounded_channel::<Inbound>();
         let notify_count = Arc::new(AtomicUsize::new(0));
+        let answered_log: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
         let buffer = Arc::new(Mutex::new(Buffer::new()));
         let status = Arc::new(Mutex::new(Status::Offline));
         let counter = Arc::clone(&notify_count);
+        let log = Arc::clone(&answered_log);
         let rt = Runtime {
             effects: Recorder::default(),
             channel_id: "ch1".to_string(),
@@ -754,11 +772,16 @@ mod tests {
             timer_tokens: Arc::new(Mutex::new(HashMap::new())),
             buffer: Arc::clone(&buffer),
             status: Arc::clone(&status),
-            notify_hook: Box::new(move |_m: RealtimeMessage| {
-                counter.fetch_add(1, Ordering::SeqCst);
+            notify_hook: Box::new(move |event: NotifyEvent| match event {
+                NotifyEvent::Realtime(_) => {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }
+                NotifyEvent::Answered { channel_id, wid } => {
+                    log.lock().unwrap().push((channel_id, wid));
+                }
             }),
         };
-        (rt, Machine::new(Box::new(|| 0.5)), notify_count, buffer, status)
+        (rt, Machine::new(Box::new(|| 0.5)), notify_count, answered_log, buffer, status)
     }
 
     /// 驱动机器事件并逐动作分派（滤除 CreateSocket——握手 spawn 真网络任务，
@@ -783,7 +806,7 @@ mod tests {
     /// 实时帧 1 条 → 通知钩子恰 1 次；缓冲 4 条；两类前端事件各 1 次。
     #[tokio::test]
     async fn two_stream_separation_notify_only_realtime() {
-        let (mut rt, mut machine, notify_count, buffer, _status) = make_rt();
+        let (mut rt, mut machine, notify_count, answered_log, buffer, _status) = make_rt();
         online(&mut machine, &mut rt);
         // 首拉批次（3 条）——绝不触发通知。
         drive(&mut machine, &mut rt, Event::Frame { result: history(&[1, 2, 3], 1, false) });
@@ -794,6 +817,10 @@ mod tests {
             notify_count.load(Ordering::SeqCst),
             1,
             "history 批 3 条 + 实时 1 条 → 通知恰 1 次（D-61）"
+        );
+        assert!(
+            answered_log.lock().unwrap().is_empty(),
+            "history/realtime 路径不产生 Answered 事件"
         );
         assert_eq!(buffer.lock().unwrap().len(), 4);
         let history_emits = rt
@@ -815,7 +842,7 @@ mod tests {
     /// sync{since=syncBase(0),limit=200}；has_more 以 dedup.last 续翻。
     #[tokio::test]
     async fn sync_frame_sequence_after_first_history() {
-        let (mut rt, mut machine, _n, _b, _s) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, _s) = make_rt();
         online(&mut machine, &mut rt);
         drive(&mut machine, &mut rt, Event::Frame { result: history(&[1, 2, 3], 1, false) });
         drive(&mut machine, &mut rt, Event::Frame { result: history(&[4, 5, 6], 1, true) });
@@ -833,7 +860,7 @@ mod tests {
     /// SendPing 直发字节常量（05-01 断言不回归；经分派路径复证）。
     #[tokio::test]
     async fn send_ping_dispatches_byte_constant() {
-        let (mut rt, _m, _n, _b, _s) = make_rt();
+        let (mut rt, _m, _n, _a, _b, _s) = make_rt();
         rt.apply(Action::SendPing);
         assert_eq!(rt.effects.sent, vec![PING.to_string()]);
     }
@@ -843,7 +870,7 @@ mod tests {
     /// 机器行为经分派路径端到端复证（详细行为已由 machine/tests/visibility 锁定）。
     #[tokio::test]
     async fn visibility_injection_drives_machine_probe() {
-        let (mut rt, mut machine, _n, _b, _s) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, _s) = make_rt();
         online(&mut machine, &mut rt);
         drive(&mut machine, &mut rt, Event::Visibility { visible: true });
         assert!(
@@ -856,10 +883,12 @@ mod tests {
         assert_eq!(rt.effects.sent.len(), sent_before);
     }
 
-    /// answered 路径：缓冲原位更新（D-17）+ ph://answered emit + 不触发通知。
+    /// answered 路径：缓冲原位更新（D-17）+ ph://answered emit + 不新增 Show
+    ///（realtime 计数不变）+ NotifyEvent::Answered 移除事件送达（D-69 闭环——
+    /// 通知中心不残留已处置事项）。
     #[tokio::test]
-    async fn answered_updates_buffer_no_notify() {
-        let (mut rt, mut machine, notify_count, buffer, _s) = make_rt();
+    async fn answered_updates_buffer_and_dispatches_notify_remove() {
+        let (mut rt, mut machine, notify_count, answered_log, buffer, _s) = make_rt();
         online(&mut machine, &mut rt);
         drive(&mut machine, &mut rt, Event::Frame { result: msg(1) });
         assert_eq!(notify_count.load(Ordering::SeqCst), 1);
@@ -892,7 +921,7 @@ mod tests {
         assert_eq!(
             notify_count.load(Ordering::SeqCst),
             1,
-            "answered 不触发通知钩子（移除通知由 05-05 在 answered 帧路径接线）"
+            "answered 不新增 Show（realtime 计数不变）"
         );
         assert_eq!(
             rt.effects
@@ -902,12 +931,19 @@ mod tests {
                 .count(),
             1
         );
+        // D-69：answered → NotifyEvent::Answered{channel_id, wid} 送达钩子
+        //（lib.rs 真实钩子转发 NotifyCmd::Remove）。
+        assert_eq!(
+            answered_log.lock().unwrap().as_slice(),
+            &[("ch1".to_string(), format!("w{:012}", 1))],
+            "answered 帧必须触发通知移除事件（D-69）"
+        );
     }
 
     /// EmitStatus 分派：共享状态单元更新（manager statuses() 数据源）。
     #[tokio::test]
     async fn emit_status_updates_shared_cell() {
-        let (mut rt, mut machine, _n, _b, status) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, status) = make_rt();
         drive(&mut machine, &mut rt, Event::Connect);
         assert_eq!(*status.lock().unwrap(), Status::Connecting);
         drive(&mut machine, &mut rt, Event::WsOpen);
@@ -917,7 +953,7 @@ mod tests {
     /// 错误路径静态文案（T-05-04-01）：WsFail 的 error 载荷不含 ws_url/密钥。
     #[tokio::test]
     async fn ws_fail_error_static_message_no_url_leak() {
-        let (mut rt, mut machine, _n, _b, _s) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, _s) = make_rt();
         drive(&mut machine, &mut rt, Event::Connect);
         drive(
             &mut machine,
@@ -962,13 +998,13 @@ mod tests {
     #[tokio::test]
     async fn close_socket_dispatch_uses_mapped_codes() {
         // Manual：Disconnect 事件路径。
-        let (mut rt, mut machine, _n, _b, _s) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, _s) = make_rt();
         online(&mut machine, &mut rt);
         drive(&mut machine, &mut rt, Event::Disconnect);
         assert_eq!(rt.effects.closes, vec![(1000, "client disconnect")]);
 
         // Fatal：v!==1 帧（D-07 客户端严格）。
-        let (mut rt, mut machine, _n, _b, _s) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, _s) = make_rt();
         online(&mut machine, &mut rt);
         drive(
             &mut machine,
@@ -983,7 +1019,7 @@ mod tests {
         );
 
         // Deadline：pong 死线超时路径（forceReconnect）。
-        let (mut rt, mut machine, _n, _b, _s) = make_rt();
+        let (mut rt, mut machine, _n, _a, _b, _s) = make_rt();
         online(&mut machine, &mut rt);
         // 武装 pong 死线的正规路径：SendPing 后 Schedule(PongDeadline)——
         // 直接喂 Timer(PongDeadline) 前需机器武装集包含它，否则被 ghost 过滤。

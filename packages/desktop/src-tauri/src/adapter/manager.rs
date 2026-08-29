@@ -28,7 +28,7 @@ use crate::buffer::{Buffer, BufferSnapshot};
 use crate::config::ChannelConfig;
 use crate::machine::{Event, Status};
 
-use super::RealtimeMessage;
+use super::NotifyEvent;
 
 /// 频道数上限（D-65——对齐管理页 Send Key 上限 10 的量级；第 9 个 add 返回
 /// ChannelLimitReached，05-05 config 命令与 05-06 UI 均以本常量为准）。
@@ -51,7 +51,7 @@ pub struct SpawnInputs {
     pub config: ChannelConfig,
     pub server: String,
     pub ready: watch::Receiver<bool>,
-    pub notify_hook: Box<dyn Fn(RealtimeMessage) + Send>,
+    pub notify_hook: Box<dyn Fn(NotifyEvent) + Send>,
     pub buffer: Arc<Mutex<Buffer>>,
     pub status: Arc<Mutex<Status>>,
     pub control: UnboundedReceiver<Event>,
@@ -102,8 +102,9 @@ pub struct ChannelManager {
     /// 服务端地址（向导首配经 set_server 更新——spawn 时读取；Mutex 因
     /// set_server 与 spawn_channel 并发调用）。
     server: Mutex<String>,
-    /// 通知钩子（统一构造注入各频道——两流分离不变量在 run_channel 分派层）。
-    notify_hook: Arc<dyn Fn(RealtimeMessage) + Send + Sync>,
+    /// 通知钩子（统一构造注入各频道——两流分离不变量在 run_channel 分派层；
+    /// Realtime → 决策矩阵 → Show，Answered → Remove）。
+    notify_hook: Arc<dyn Fn(NotifyEvent) + Send + Sync>,
     /// 频道任务工厂（测试注入假任务）。
     runner: ChannelRunner,
     /// 前端就绪信号（05-01 就绪门：所有频道共享同一信号源）。
@@ -114,7 +115,7 @@ pub struct ChannelManager {
 impl ChannelManager {
     pub fn new(
         server: String,
-        notify_hook: Arc<dyn Fn(RealtimeMessage) + Send + Sync>,
+        notify_hook: Arc<dyn Fn(NotifyEvent) + Send + Sync>,
         runner: ChannelRunner,
     ) -> Self {
         let (ready_tx, _) = watch::channel(false);
@@ -163,7 +164,7 @@ impl ChannelManager {
         let buffer = Arc::new(Mutex::new(Buffer::new()));
         let status = Arc::new(Mutex::new(Status::Offline));
         let shared_hook = Arc::clone(&self.notify_hook);
-        let notify_hook = Box::new(move |m: RealtimeMessage| shared_hook(m));
+        let notify_hook = Box::new(move |e: NotifyEvent| shared_hook(e));
         let join = (self.runner)(SpawnInputs {
             config: config.clone(),
             server: self.server.lock().unwrap().clone(),
@@ -332,7 +333,7 @@ mod tests {
     fn manager_with(runner: ChannelRunner) -> ChannelManager {
         ChannelManager::new(
             "http://127.0.0.1:4911".to_string(),
-            Arc::new(|_m: RealtimeMessage| {}),
+            Arc::new(|_e: NotifyEvent| {}),
             runner,
         )
     }
@@ -503,7 +504,7 @@ mod tests {
         });
         let mgr = ChannelManager::new(
             "http://old".to_string(),
-            Arc::new(|_m: RealtimeMessage| {}),
+            Arc::new(|_e: NotifyEvent| {}),
             runner,
         );
         mgr.spawn_channel(&cfg("ch1")).unwrap();
@@ -547,7 +548,7 @@ mod tests {
         });
         let mgr = ChannelManager::new(
             "http://s".to_string(),
-            Arc::new(|_m: RealtimeMessage| {}),
+            Arc::new(|_e: NotifyEvent| {}),
             runner,
         );
         mgr.spawn_channel(&cfg("ch1")).unwrap();
