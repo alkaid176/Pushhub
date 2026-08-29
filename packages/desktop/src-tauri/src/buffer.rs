@@ -55,35 +55,55 @@ impl<T> Buffer<T> {
 
     /// 入缓冲；容量满时淘汰最旧一条（插入序）并返回被淘汰项（未满返回 None）。
     pub fn push(&mut self, msg: T) -> Option<T> {
-        let _ = msg;
-        todo!("Task 1 GREEN: 环形淘汰语义")
+        let evicted = if self.deque.len() >= BUFFER_CAP {
+            self.deque.pop_front()
+        } else {
+            None
+        };
+        if evicted.is_some() {
+            self.evicted += 1;
+        }
+        self.deque.push_back(msg);
+        evicted
     }
 
     /// 当前保留条数。
     pub fn len(&self) -> usize {
-        todo!("Task 1 GREEN: len")
+        self.deque.len()
     }
 
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
-        todo!("Task 1 GREEN: is_empty")
+        self.deque.is_empty()
     }
 }
 
 impl Buffer<MessageFrame> {
     /// 全量快照：消息按 seq 升序 + 淘汰计数 + 最旧保留 seq。
     pub fn snapshot(&self) -> BufferSnapshot {
-        let _ = &self.deque;
-        let _ = self.evicted;
-        todo!("Task 1 GREEN: snapshot 全量导出")
+        let mut messages: Vec<MessageFrame> = self.deque.iter().cloned().collect();
+        messages.sort_by_key(|m| m.seq);
+        BufferSnapshot {
+            oldest_kept_seq: messages.first().map(|m| m.seq),
+            messages,
+            evicted: self.evicted,
+        }
     }
 
     /// answered 原位更新（D-17）：按 wid 定位缓冲内消息，answered 系列字段
     /// 以帧为准覆写；找不到返回 false（迟到 answered 容忍——消息可能已被
     /// 环形淘汰）。幂等：同 wid 重复扇出重复覆写无害。
     pub fn apply_answered(&mut self, frame: &AnsweredFrame) -> bool {
-        let _ = frame;
-        todo!("Task 1 GREEN: answered 原位更新")
+        for m in &mut self.deque {
+            if m.wid == frame.wid {
+                m.answered = frame.answered;
+                m.answered_by = frame.answered_by.clone();
+                m.answered_at = Some(frame.answered_at);
+                m.answered_content = frame.answered_content.clone();
+                return true;
+            }
+        }
+        false
     }
 }
 
