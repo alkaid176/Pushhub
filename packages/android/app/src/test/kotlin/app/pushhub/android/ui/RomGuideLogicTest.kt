@@ -33,24 +33,29 @@ class RomGuideLogicTest {
     }
 
     @Test
-    fun checklistMappingXiaomiThreeItems() {
+    fun checklistMappingXiaomiFourItemsIncludingFloatingNotification() {
         val items = romChecklistFor(RomKind.XIAOMI)
-        assertEquals(3, items.size)
-        assertEquals(listOf("xiaomi_autostart", "xiaomi_battery", "xiaomi_lockscreen"), items.map { it.id })
-        // 三项文案与 P11 ③ 对齐（自启动/省电策略/锁屏后台运行）。
+        assertEquals(4, items.size)
+        assertEquals(
+            listOf("xiaomi_autostart", "xiaomi_battery", "xiaomi_lockscreen", "xiaomi_floating"),
+            items.map { it.id },
+        )
+        // 四项文案与 P11 ③ + SC1 spike 补正对齐（自启动/省电策略/锁屏后台运行/浮动通知）。
         assertTrue(items[0].label.contains("自启动"))
         assertTrue(items[1].label.contains("省电策略"))
         assertTrue(items[2].label.contains("锁屏后台运行"))
+        assertTrue(items[3].label.contains("浮动通知"))
     }
 
     @Test
-    fun checklistMappingHuaweiThreeItemsIncludingP11IndependentSwitches() {
+    fun checklistMappingHuaweiFourItemsIncludingP11IndependentSwitches() {
         val items = romChecklistFor(RomKind.HUAWEI)
-        assertEquals(3, items.size)
-        // 启动管理三开关 + 两个独立开关（P11 ④——显示锁屏通知/后台弹出界面并入清单）。
+        assertEquals(4, items.size)
+        // 启动管理三开关 + 三个独立开关（P11 ④ + SC1 spike 补正——显示锁屏通知/后台弹出界面/浮动通知）。
         assertTrue(items[0].label.contains("启动管理"))
         assertTrue(items[1].label.contains("显示锁屏通知"))
         assertTrue(items[2].label.contains("后台弹出界面"))
+        assertTrue(items[3].label.contains("浮动通知"))
     }
 
     @Test

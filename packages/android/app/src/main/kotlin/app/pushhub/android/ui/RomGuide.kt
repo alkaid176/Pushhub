@@ -30,8 +30,8 @@ data class GuideChecklistItem(val id: String, val label: String)
 
 /**
  * 品牌专属开关清单（P11 ③④——spike 锁屏前逐项核对项）：
- * 小米三项（自启动/省电策略/锁屏后台运行）；华为系三项（启动管理三开关/
- * 显示锁屏通知/后台弹出界面——P11 华为独立开关并入清单）；其他品牌仅通用
+ * 小米四项（自启动/省电策略/锁屏后台运行/浮动通知——SC1 spike 补正）；华为系四项（启动管理三开关/
+  * 显示锁屏通知/后台弹出界面/浮动通知——P11 华为独立开关并入清单）；其他品牌仅通用
  * 后台设置项（白名单条目由引导区单独渲染，不在本清单）。
  */
 fun romChecklistFor(kind: RomKind): List<GuideChecklistItem> = when (kind) {
@@ -39,11 +39,13 @@ fun romChecklistFor(kind: RomKind): List<GuideChecklistItem> = when (kind) {
         GuideChecklistItem("xiaomi_autostart", RomGuideCopy.XIAOMI_AUTOSTART),
         GuideChecklistItem("xiaomi_battery", RomGuideCopy.XIAOMI_BATTERY),
         GuideChecklistItem("xiaomi_lockscreen", RomGuideCopy.XIAOMI_LOCKSCREEN),
+        GuideChecklistItem("xiaomi_floating", RomGuideCopy.XIAOMI_FLOATING),
     )
     RomKind.HUAWEI -> listOf(
         GuideChecklistItem("huawei_startup", RomGuideCopy.HUAWEI_STARTUP),
         GuideChecklistItem("huawei_lockscreen_notify", RomGuideCopy.HUAWEI_LOCKSCREEN_NOTIFY),
         GuideChecklistItem("huawei_bg_popup", RomGuideCopy.HUAWEI_BG_POPUP),
+        GuideChecklistItem("huawei_floating", RomGuideCopy.HUAWEI_FLOATING),
     )
     RomKind.OTHER -> listOf(
         GuideChecklistItem("generic_background", RomGuideCopy.GENERIC_BACKGROUND),
@@ -116,15 +118,17 @@ object RomGuideCopy {
     const val MANUAL_FALLBACK = "无法直达该设置页——请在系统设置中手动开启"
     const val JUMP_PREFIX = "去开启："
 
-    /** 小米三项（P11 ③）。 */
+    /** 小米四项（P11 ③ + SC1 spike 补正项）。 */
     const val XIAOMI_AUTOSTART = "自启动权限：允许（安全中心 → 应用管理 → PushHub）"
     const val XIAOMI_BATTERY = "省电策略：无限制（安全中心 → 省电与电池 → 应用智能省电）"
     const val XIAOMI_LOCKSCREEN = "锁屏后台运行：允许"
+    const val XIAOMI_FLOATING = "浮动通知：开启（通知管理 → PushHub）——不开则重要消息不弹横幅，只进通知栏"
 
-    /** 华为系三项（P11 ④——启动管理三开关 + 两个独立开关并入清单）。 */
+    /** 华为系四项（P11 ④——启动管理三开关 + 三个独立开关并入清单；浮动通知为 SC1 spike 补正项）。 */
     const val HUAWEI_STARTUP = "启动管理：三开关全开（自启动/关联启动/后台活动）"
     const val HUAWEI_LOCKSCREEN_NOTIFY = "显示锁屏通知：开（通知设置独立开关）"
     const val HUAWEI_BG_POPUP = "后台弹出界面：允许（应用启动管理独立开关）"
+    const val HUAWEI_FLOATING = "浮动通知/横幅通知：开启（通知与状态栏设置）——不开则重要消息不弹横幅"
 
     /** 其他品牌通用项。 */
     const val GENERIC_BACKGROUND = "应用后台运行：允许（系统设置 → 应用 → PushHub → 电池/流量）"
