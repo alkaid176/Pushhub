@@ -7,6 +7,7 @@ import app.pushhub.android.machine.MachineEvent
 import app.pushhub.android.machine.Status
 import app.pushhub.android.machine.TimerKind
 import app.pushhub.android.machine.CloseReason
+import app.pushhub.android.protocol.AnsweredFrame
 import app.pushhub.android.protocol.HistoryFrame
 import app.pushhub.android.protocol.MessageFrame
 import app.pushhub.android.protocol.PROTOCOL_VERSION
@@ -33,13 +34,21 @@ import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * ChannelEvents 回调接口（06-01 tracer 四回调）——后续 plan 的通知路由与 UI 的
- * 同口订阅点（06-05 NotificationRouter / 06-06 消息界面均挂此口扩展）。
+ * ChannelEvents 回调接口——通知路由与 UI 的同口订阅点（06-05 NotificationRouter /
+ * 06-06 消息界面均挂此口扩展）。
+ *
+ * 两流分离不变量（D-61/D-63，adapter/mod.rs:17-21 先例）：回调语义按机器动作
+ * 分型，adapter 内不合并不转发混装——
+ *  - onMessage 仅来自 EmitMessage（实时帧 → 通知路径）；
+ *  - onHistory 仅来自 EmitHistory（首拉/补拉批次 → 缓冲路径，绝不触发通知）；
+ *  - onAnswered 仅来自 EmitAnswered（answered 扇出 → D-69 cancel(tag=wid) 路径）。
+ * 双计数器测试锁定（AdapterResyncTest）。
  */
 interface ChannelEvents {
     fun onStatus(status: Status)
     fun onMessage(message: MessageFrame)
     fun onHistory(frame: HistoryFrame)
+    fun onAnswered(frame: AnsweredFrame)
     fun onError(error: ErrorPayload)
 }
 
@@ -93,7 +102,8 @@ fun buildWsUrl(serverUrl: String, channelKey: String): String {
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class OkHttpChannelAdapter(
-    private val machine: ConnectionMachine,
+    /** internal：测试观测最终状态（Concurrency 测试与单线程重放对照）。 */
+    internal val machine: ConnectionMachine,
     serverUrl: String,
     channelKey: String,
     private val events: ChannelEvents,
@@ -146,6 +156,13 @@ class OkHttpChannelAdapter(
         eventQueue.trySend(event)
     }
 
+    /**
+     * 事件注入口（JVM 测试专用——internal 同 module 可见）：模拟定时器到期/
+     * WS 回调到达，直接向 feed 通道压入事件（AdapterFailover 死线路径与
+     * AdapterConcurrency 并发防线测试消费；生产代码不得调用）。
+     */
+    internal fun feedEvent(event: MachineEvent) = feed(event)
+
     // ---- 动作分派（仅消费协程调用——串行化保证） ----
 
     private fun apply(action: MachineAction) {
@@ -176,10 +193,7 @@ class OkHttpChannelAdapter(
             is MachineAction.EmitStatus -> events.onStatus(action.status)
             is MachineAction.EmitMessage -> events.onMessage(action.message)
             is MachineAction.EmitHistory -> events.onHistory(action.frame)
-            is MachineAction.EmitAnswered -> {
-                // 06-03 接通：answered 透传回调（ChannelEvents 扩展 onAnswered）——
-                // 词汇表动作已就位，D-17（dedup 之外原样透传）语义随帧型补全落地。
-            }
+            is MachineAction.EmitAnswered -> events.onAnswered(action.frame)
             is MachineAction.EmitError -> events.onError(action.error)
         }
     }
@@ -209,6 +223,14 @@ class OkHttpChannelAdapter(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (gen == generation.get()) feed(MachineEvent.WsClose)
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                // 06-03 修复：OkHttp 默认 onClosing 不回应——服务端优雅关闭时
+                // 客户端挂在半关闭态（onClosed 永不触发 → 机器收不到 WsClose →
+                // 连接泄漏）。标准 OkHttp 客户端模式：回 close 完成握手，随后
+                // onClosed 走 WsClose 族。
+                webSocket.close(code, reason)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {

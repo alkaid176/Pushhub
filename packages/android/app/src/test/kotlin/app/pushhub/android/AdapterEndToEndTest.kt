@@ -143,6 +143,8 @@ class AdapterEndToEndTest {
                 override fun onError(error: ErrorPayload) {
                     callbackTrace += "error:${error.message}"
                 }
+
+                override fun onAnswered(frame: app.pushhub.android.protocol.AnsweredFrame) = Unit
             },
         )
 
@@ -194,6 +196,8 @@ class AdapterEndToEndTest {
                 override fun onError(error: ErrorPayload) {
                     errors += error
                 }
+
+                override fun onAnswered(frame: app.pushhub.android.protocol.AnsweredFrame) = Unit
             },
         )
         try {
