@@ -63,8 +63,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     // 06-04：向导/频道管理 UI（D-83 View 体系 + Material Components——TextInputLayout/
-    // MaterialAlertDialog 需 Material 主题与 material 库）
+    // MaterialAlertDialog 需 Material 主题与 material 库；recyclerview 频道列表）
     implementation(libs.material)
+    implementation(libs.androidx.recyclerview)
 
     // JVM 测试：机器/协议纯逻辑 + fixtures 契约 + mockwebserver3 真实 WS 模拟
     testImplementation(libs.junit)

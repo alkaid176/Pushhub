@@ -157,6 +157,8 @@ class WizardActivity : AppCompatActivity() {
         prefillServer()
         attachValidationWatchers()
         renderFormState()
+        // RomGuide 引导区注入（Task 3——电池白名单/ROM 专属/P11 清单内嵌向导）。
+        renderRomGuide(findViewById(R.id.rom_guide_container))
     }
 
     private fun bindViews() {
