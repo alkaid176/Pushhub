@@ -27,16 +27,22 @@ val missingSigningEnv = listOfNotNull(
     if (envKeyPassword.isPresent) null else "PUSHHUB_KEY_PASSWORD",
 )
 // 响亮失败仅绑定 release 任务面：testDebugUnitTest / assembleDebug 等日常回归
-// 无需签名环境（startParameter.taskNames 为命令行原始请求，如 :app:assembleRelease）。
-val requestsReleaseTask = gradle.startParameter.taskNames.any {
-    it.contains("Release", ignoreCase = true)
-}
-if (requestsReleaseTask && missingSigningEnv.isNotEmpty()) {
-    throw GradleException(
-        "release 签名环境变量缺失: ${missingSigningEnv.joinToString(", ")} — " +
-            "keystore 与口令在仓库外，经环境变量注入（DEPLOY.md 安卓端章节）；" +
-            "缺失即失败，不回退无签名构建（T-06-08-01）。",
-    )
+// 无需签名环境。WR-06 修复：改**任务图级**判定——原 startParameter.taskNames 只
+// 看命令行原始请求，`build` / `check` / `assemble` 等伞任务经任务图依赖到达
+// assembleRelease 却不含 "Release" 字样，门被绕过（缺失时 signingConfig 留空
+// 进入 release 打包 = 未签名产出）。whenReady 在任务图就绪后、任何任务执行前
+// 检查全部入图任务，伞任务路径同样拦截。注意：若未来启用 Gradle 配置缓存
+// （org.gradle.configuration-cache），whenReady 属不支持 API——届时需改为
+// 「校验任务 + release 任务 dependsOn」接线。
+gradle.taskGraph.whenReady {
+    val requestsReleaseTask = allTasks.any { it.name.contains("release", ignoreCase = true) }
+    if (requestsReleaseTask && missingSigningEnv.isNotEmpty()) {
+        throw GradleException(
+            "release 签名环境变量缺失: ${missingSigningEnv.joinToString(", ")} — " +
+                "keystore 与口令在仓库外，经环境变量注入（DEPLOY.md 安卓端章节）；" +
+                "缺失即失败，不回退无签名构建（T-06-08-01）。",
+        )
+    }
 }
 
 android {
