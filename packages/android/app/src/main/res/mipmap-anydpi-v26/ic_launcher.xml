@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 最小自适应图标占位（minSdk 26 ⇒ anydpi-v26 覆盖全部设备，无需 PNG dpi 桶）。
-     正式图标 06-08 复用 packages/desktop/app-icon.png 再做（计划裁量区）。 -->
+<!-- 正式自适应图标（06-08 Task 1）：minSdk 26 ⇒ anydpi-v26 覆盖全部设备，无需
+     PNG dpi 桶。背景纯色与桌面端 app-icon.png 底色同值（#1B1E2B）；前景与
+     monochrome 共用同一像素 P drawable——Android 13 主题取色图标经 monochrome
+     层生效（系统按壁纸 tint，品牌轮廓不变）。 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>

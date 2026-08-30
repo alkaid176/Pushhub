@@ -132,7 +132,7 @@ gradlew.bat assembleRelease       # release APK（06-08 起经环境变量注入
 | 形态 | 产物路径 | 说明 |
 |------|---------|------|
 | debug APK | `packages/android/app/build/outputs/apk/debug/app-debug.apk` | v1 minify=false，debug/release 行为同构（Pitfall 10——06-08 release 出包复验） |
-| release APK | `packages/android/app/build/outputs/apk/release/app-release.apk` | 正式分发（未配置签名时为 app-release-unsigned.apk） |
+| release APK | `packages/android/app/build/outputs/apk/release/app-release.apk` | 正式分发。签名配置经三环境变量注入（`PUSHHUB_KEYSTORE` / `PUSHHUB_KEYSTORE_PASSWORD` / `PUSHHUB_KEY_PASSWORD`，keystore 在仓库外 `D:/AIworkspaces/keys/pushhub-android.jks`，alias `pushhub`）——缺失任一且构建请求 release 任务时响亮失败（列出缺失变量名，不打印值），绝不回退无签名产出（T-06-08-01） |
 
 ### 装机（adb）
 
@@ -181,3 +181,4 @@ adb install -r <apk 路径>          # -r 覆盖安装（保留应用数据/配�
 
 | 版本 | versionCode | 时间 (UTC) | 产物 | 回归结果 |
 |------|------------|-----------|------|---------|
+| 0.1.0 | 1 | 2026-08-30 | `app-release.apk` — 6,671,332 字节，SHA256 `1D7E1CB9FF19C48480F56AFA80327A669719FF1BE9A6C51C740B62F9380D330E`，APK Signature Scheme v2（证书 DN `CN=PushHub Android Release, OU=PushHub, O=dyun, C=CN`，cert SHA-256 `09779dce…99452b`）；正式图标套件首发（自适应前景/monochrome 像素 P + 背景 #1B1E2B + 通知图标 P 定稿） | 构建侧：assembleRelease v2 签名验证通过 + git 零密钥泄漏（06-08 Task 1）；JVM 全量回归与 debug/release 双构建 = 06-08 Task 3（见「发布前回归」）；**release 真机冒烟四步（连接/收消息/通知/回复）待 spike 真机在场执行**（Pitfall 10 同构性实证——桌面 G-05-5 教训的结构化复验） |

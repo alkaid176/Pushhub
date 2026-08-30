@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景：简单 vector path 占位（白色圆点，安全区 66dp 内）。 -->
+<!-- 正式自适应图标前景（06-08 Task 1，RESEARCH Q4 裁决落地）：白色像素风字母 P
+     ——与桌面端 app-icon.png（scripts/gen-icon.mjs 的 12x16 点阵 P）同一品牌身份，
+     逐格同源（点阵 → 3dp 格，36x48dp 居中于 108dp 画布）。全部笔画面位于中央 66dp
+     安全区内（四角距中心最远 30dp &lt; 33dp 半径）。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- 顶横杠（rows 0-1）+ 左竖干全高（cols 0-2）——一笔 L 形 -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,38a16,16 0 1,0 0.001,0z" />
+        android:pathData="M36,30 L72,30 L72,36 L45,36 L45,78 L36,78 Z" />
+    <!-- 碗右壁（cols 9-11, rows 2-7） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M63,36 L72,36 L72,54 L63,54 Z" />
+    <!-- 中横杠右段（rows 6-7，左段由竖干覆盖） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M45,48 L72,48 L72,54 L45,54 Z" />
 </vector>

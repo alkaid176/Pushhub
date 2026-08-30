@@ -1,3 +1,5 @@
+import org.gradle.api.GradleException
+
 // app 模块：PushHub 安卓客户端（单模块起步，RESEARCH §Recommended Project Structure）。
 //
 // applicationId 经 06-01 Task 0 checkpoint 用户决策锁定为 app.pushhub.android
@@ -8,6 +10,33 @@ plugins {
     alias(libs.plugins.android.application)
     // Kotlin：AGP 9 built-in Kotlin（默认）——不 apply org.jetbrains.kotlin.android
     alias(libs.plugins.kotlin.serialization)
+}
+
+// 06-08 Task 1：release 签名配置——keystore 与口令全部经环境变量注入
+// （PUSHHUB_KEYSTORE / PUSHHUB_KEYSTORE_PASSWORD / PUSHHUB_KEY_PASSWORD），
+// keystore 在仓库外（T-06-08-01：泄漏面 = 分发信任根）。缺失任一且本次构建
+// 请求了 release 任务 → 构建失败并列出缺失变量名（不打印值——口令永不进日志）；
+// 绝不静默回退无签名产出。debug 构建与 JVM 测试不受影响（变量缺失时
+// signingConfig 留空，AGP 在 release 打包期以自身校验兜底拒绝）。
+val envKeystore = providers.environmentVariable("PUSHHUB_KEYSTORE")
+val envStorePassword = providers.environmentVariable("PUSHHUB_KEYSTORE_PASSWORD")
+val envKeyPassword = providers.environmentVariable("PUSHHUB_KEY_PASSWORD")
+val missingSigningEnv = listOfNotNull(
+    if (envKeystore.isPresent) null else "PUSHHUB_KEYSTORE",
+    if (envStorePassword.isPresent) null else "PUSHHUB_KEYSTORE_PASSWORD",
+    if (envKeyPassword.isPresent) null else "PUSHHUB_KEY_PASSWORD",
+)
+// 响亮失败仅绑定 release 任务面：testDebugUnitTest / assembleDebug 等日常回归
+// 无需签名环境（startParameter.taskNames 为命令行原始请求，如 :app:assembleRelease）。
+val requestsReleaseTask = gradle.startParameter.taskNames.any {
+    it.contains("Release", ignoreCase = true)
+}
+if (requestsReleaseTask && missingSigningEnv.isNotEmpty()) {
+    throw GradleException(
+        "release 签名环境变量缺失: ${missingSigningEnv.joinToString(", ")} — " +
+            "keystore 与口令在仓库外，经环境变量注入（DEPLOY.md 安卓端章节）；" +
+            "缺失即失败，不回退无签名构建（T-06-08-01）。",
+    )
 }
 
 android {
@@ -27,11 +56,27 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            // 三值全在场才落配置（缺失时此处留空——上方 release 任务门已拒绝）
+            if (missingSigningEnv.isEmpty()) {
+                storeFile = file(envKeystore.get())
+                storePassword = envStorePassword.get()
+                keyAlias = "pushhub"
+                keyPassword = envKeyPassword.get()
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             // v1 自分发不启 minify（Pitfall 10：R8 裁剪 kotlinx.serialization
             // serializer 的风险直接绕开；spike 包与 UAT 包与发布配置同构）
             isMinifyEnabled = false
+            // 资源收缩依赖 minify（isMinifyEnabled=false 时必须显式同 false）——
+            // debug/release 同构的另一半（Pitfall 10 / 桌面 G-05-5 教训）
+            isShrinkResources = false
         }
     }
 

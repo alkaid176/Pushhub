@@ -41,5 +41,11 @@ packages/android/.gradle/
 packages/android/build/
 packages/android/app/build/
 
+# Android 签名密钥（06-08 T-06-08-01：keystore 与口令永不入库——仓库外
+# D:/AIworkspaces/keys/ 经环境变量注入；防御纵深：即使误拷入仓库也不被跟踪）
+*.jks
+*.keystore
+pushhub-android-credentials.json
+
 # spike 运行产物（D-85：发送记录 JSONL——含频道上下文，不入库）
 scripts/.spike-out/
