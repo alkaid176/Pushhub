@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PushHub Android manifest（06-01 Task 2，RESEARCH Pattern 3 官方逐字验证）。
+     specialUse 三件套：FOREGROUND_SERVICE_SPECIAL_USE 权限 + foregroundServiceType
+     ="specialUse" + android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE property——该类型
+     无系统级超时（dataSync 在 Android 15 有 6 小时日上限，正是弃用原因）。
+     property 为自由文本用例说明（本项目 ADB 自分发不涉 Play 审核，仍如实填写）。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 五权限（Pattern 3 全量）：FGS 基座 + specialUse 类型 + 通知运行时权限 +
+         电池白名单引导（D-86）+ 网络 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="PushHub"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@style/Theme.PushHub">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.PushHubService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent WebSocket notification client for user-configured channels; keeps realtime webhook alert connection alive for immediate notification delivery" />
+        </service>
+    </application>
+
+</manifest>

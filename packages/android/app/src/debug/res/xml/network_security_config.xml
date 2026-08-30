@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug 源集：允许 cleartext——本地 wrangler dev（http:// 局域网地址）真机联调
+     （Pitfall 7；仅在 debug 构建生效，release 走 main 源集硬禁配置）。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

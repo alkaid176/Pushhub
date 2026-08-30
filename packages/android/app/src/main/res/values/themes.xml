@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- D-83：View 体系 + Material Components；主题细节属裁量区（正式视觉 06-06+）。
+         appcompat 基座保证 minSdk 26 上的兼容行为。 -->
+    <style name="Theme.PushHub" parent="Theme.AppCompat.DayNight.NoActionBar" />
+</resources>

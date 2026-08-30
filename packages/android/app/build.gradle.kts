@@ -12,7 +12,11 @@ plugins {
 
 android {
     namespace = "app.pushhub.android"
-    compileSdk = 35
+    // Rule 3 偏差修复：计划的 compileSdk 35 与冻结库版本内部矛盾——androidx
+    // 1.19.0/1.13.0 与 okhttp-android 5.5.0 的 AAR metadata 均要求 compileSdk
+    // 36-37+。compileSdk 只是构建期 API 面；targetSdk 35（specialUse FGS 策略
+    // 锚点，CLAUDE.md 锁定）与 minSdk 26 均不变——组合合法且是标准做法。
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "app.pushhub.android"
