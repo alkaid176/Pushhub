@@ -144,6 +144,13 @@ class OkHttpChannelAdapter(
     /** 主动断开（Disconnect 臂位 06-03 填充；feed 通道保持开放）。 */
     fun disconnect() = feed(MachineEvent.Disconnect)
 
+    /**
+     * 探活广播入口（D-27——06-07 增补）：ChannelManager.setVisibility 逐频道
+     * 转发的生产注入口（此前唯一入口是 internal feedEvent 测试通道——06-07
+     * ChannelRuntime.setVisibility 接线所需的最小增补，Rule 3）。
+     */
+    fun setVisibility(visible: Boolean) = feed(MachineEvent.Visibility(visible))
+
     /** 终局销毁：Destroy 事件 + 串行队列关闭 + scope 取消（定时器一并收敛）。 */
     fun destroy() {
         feed(MachineEvent.Destroy)
