@@ -118,10 +118,18 @@ class MessageListAdapter(
      * 隐式设 LinkMovementMethod（吞掉正文区全部触摸 → 卡片选中点击永不触发），
      * 渲染后统一覆写为 [CardFriendlyLinkMovement]——链接白名单点击照常，空白区
      * 放行冒泡到 itemView 选中。
+     *
+     * 【二段修复——运行时探针实证】TextView.setMovementMethod 内部会强制
+     * setClickable(true)/setLongClickable(true)（AOSP
+     * fixFocusableAndClickableSettings）——TextView 因此在 View 层 DOWN 即消费
+     * 全部触摸，movement 返回 false 已无法冒泡。必须再显式关闭 clickable：
+     * movement 分支（含链接 span 点击）不依赖 clickable 标志。
      */
     private fun renderMarkdown(view: TextView, text: String) {
         markwon.setMarkdown(view, text)
         view.movementMethod = CardFriendlyLinkMovement
+        view.isClickable = false
+        view.isLongClickable = false
     }
 
     /** 快捷选项横排（未答消息；options 空/全空白不渲染——空态纪律）。 */
