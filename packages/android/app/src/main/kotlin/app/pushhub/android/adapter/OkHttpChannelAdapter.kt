@@ -122,7 +122,13 @@ class OkHttpChannelAdapter(
     /** 当前连接代际号（CreateSocket 自增；listener 回调据此过滤陈旧）。 */
     private val generation = AtomicLong(0)
 
-    /** 当前代际的 WebSocket 句柄（仅消费协程读写——feed 串行化保证）。 */
+    /**
+     * 当前代际的 WebSocket 句柄（消费协程写——feed 串行化保证；sendReply 由 UI
+     * 主线程、destroy 由调用方线程跨线程读——@Volatile 保证可见性，WR-01 修复：
+     * 此前字段注释声明「仅消费协程读写」，非 volatile 跨线程读无 happens-before，
+     * 违背自身并发模型声明）。
+     */
+    @Volatile
     private var ws: WebSocket? = null
 
     /** destroy 已置位（openSocket 建连竞态兜底——CR-01：destroy 读取 ws 后才赋值的新句柄补取消）。 */
