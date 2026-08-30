@@ -31,9 +31,9 @@ data class ChannelConfig(
  */
 @Serializable
 data class Config(
-    val server: String = "",
+    var server: String = "",
     val channels: MutableList<ChannelConfig> = mutableListOf(),
-    val displayName: String? = null,
+    var displayName: String? = null,
 )
 
 /**

@@ -42,6 +42,13 @@ android {
 
     // built-in Kotlin 下 jvmTarget 缺省取 compileOptions.targetCompatibility（=17），
     // 无需 kotlinOptions DSL（AGP 9 迁移指引：该 DSL 已废弃）。
+
+    // 06-04：Robolectric 向导测试（Activity/布局/SharedPreferences 真实资源）
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -55,11 +62,17 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
+    // 06-04：向导/频道管理 UI（D-83 View 体系 + Material Components——TextInputLayout/
+    // MaterialAlertDialog 需 Material 主题与 material 库）
+    implementation(libs.material)
+
     // JVM 测试：机器/协议纯逻辑 + fixtures 契约 + mockwebserver3 真实 WS 模拟
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockwebserver3)
+    // 06-04：向导表单/权限路径状态机（Activity + 布局真实资源）
+    testImplementation(libs.robolectric)
 
     // instrumentation（真机 connected 测试：通知/FGS——06-02+/spike 消费）
     androidTestImplementation(libs.androidx.test.runner)

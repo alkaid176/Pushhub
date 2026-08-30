@@ -31,6 +31,15 @@
             </intent-filter>
         </activity>
 
+        <!-- 首启向导/添加频道表单（06-04 Task 2，D-82）：exported=false（T-06-04-03
+             ——仅 MainActivity 首启判定与频道管理页内部跳转，不对外暴露）；
+             Material3 主题（TextInputLayout 要求，D-83）。 -->
+        <activity
+            android:name=".ui.WizardActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:theme="@style/Theme.PushHub.Material" />
+
         <service
             android:name=".service.PushHubService"
             android:exported="false"
