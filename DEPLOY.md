@@ -110,3 +110,74 @@ node scripts/make-portable.mjs        # ② 便携版整理（exe + README → d
 |------|-----------|------|---------|
 | 0.1.0 | 2026-08-29 | NSIS `PushHub_0.1.0_x64-setup.exe` + `dist/portable/` | cargo test 146/146 + 桌面 E2E 6/6（tracer/render/reply-chain/reconnect/close-window/wizard）；实机人工项（上表 ①-⑤）待阶段末 UAT 批量复核 |
 | 0.1.1 | 2026-08-29 | NSIS `PushHub_0.1.1_x64-setup.exe` + `dist/portable/` | cargo test 147/147（+1 TLS 分支护栏：裸 TcpListener 先收 ClientHello 再断开 → 分类 Err 不 panic）+ 桌面 E2E 6/6（含 wizard 新增 https:// 失败路径用例——TLS 分支常驻哨兵）；**G-05-5 修复**：rustls ring provider——修复前向导对 https:// 服务端地址点「验证连通」（及任何配置 https:// 服务端频道的 wss:// 主连接）rustls 无 crypto provider panic，release `panic=abort` 下全进程静默闪退；**UAT Test 5 实机复测待验**：验证连通不闪退 + D-71 首关提示 |
+
+## 安卓端（Android）分发
+
+安卓端为**自分发 APK 形态**（ADB 安装，不上 Play——D-77）：独立 Gradle 工程 `packages/android/`（不进 pnpm workspace，构建体系独立），版本线独立于服务端与桌面端。
+
+### 版本号规则（安卓端）
+
+- 安卓端版本线自 **0.1.0** 起（与服务端、桌面端均相互独立，不联动——D-77 先例沿用）。
+- `packages/android/app/build.gradle.kts` 中 `versionName` 与 `versionCode` 同步维护：**versionCode 单调递增**（每次构建 +1，永不回退——覆盖安装升级的判定依据）；**每次发布前 versionName 补丁位 +1**（0.1.0 → 0.1.1 → …）。
+- 每次发布在下方「安卓端发布记录」表登记一行（版本、versionCode、产物、回归结果）。
+
+### 构建命令与产物路径
+
+```bash
+cd packages/android
+gradlew.bat assembleDebug         # debug APK（spike 与日常装机载体）
+gradlew.bat assembleRelease       # release APK（06-08 起经环境变量注入签名配置）
+```
+
+| 形态 | 产物路径 | 说明 |
+|------|---------|------|
+| debug APK | `packages/android/app/build/outputs/apk/debug/app-debug.apk` | v1 minify=false，debug/release 行为同构（Pitfall 10——06-08 release 出包复验） |
+| release APK | `packages/android/app/build/outputs/apk/release/app-release.apk` | 正式分发（未配置签名时为 app-release-unsigned.apk） |
+
+### 装机（adb）
+
+```bash
+adb install -r <apk 路径>          # -r 覆盖安装（保留应用数据/配置）
+```
+
+- adb 位于 Android SDK **platform-tools**（默认 `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`，未加入 PATH 时用全路径调用）。
+- 设备需已开启「USB 调试」（开发者选项），首次连接在设备上接受调试授权弹窗；`adb devices` 能列出设备即可装机。
+- release 包与 debug 包签名不同：换装 release 前需 `adb uninstall app.pushhub.android`（应用数据仅配置，重走向导即可）。
+
+### spike 操作流程（SC1 真机存活验证——D-85 三步）
+
+每轮 spike 按三步执行（正式启动在 06-05 向导就位后；工具链 06-02 已就绪）：
+
+1. **建频道 + 启动发送**：管理页 https://pushhub.dyun.org/admin.html 建独立 spike 频道（如 `spike-01`，不复用业务频道——T-06-02-02 污染面隔离），取该频道 Send Key 与 Channel Key。Send Key 经环境变量传入脚本（用户密码库管理，勿入库/勿进命令历史）：
+   ```bash
+   PUSHHUB_SPIKE_SEND_KEY=<secret> node scripts/spike-send.mjs --hours 8
+   ```
+   启动即发第 0 条，此后每小时 1 条共 9 条，发送记录落 `scripts/.spike-out/send-<时间戳>.jsonl`（gitignored）。
+2. **装机 + 引导 + 锁屏**：真机 `adb install -r` 装 debug APK，向导以 Channel Key 接入 spike 频道，完成下方 P11 引导核对清单后锁屏放置过夜（保持 WiFi/运营商网络连接——真实使用姿势，非实验室环境）。**装机与引导须在第 1 小时消息（启动后 60 分钟）前完成。**
+3. **次日报告**：
+   ```bash
+   adb exec-out run-as app.pushhub.android cat files/spike-log/<yyyy-MM-dd>.jsonl > device-<name>.jsonl
+   node scripts/spike-report.mjs --send-log scripts/.spike-out/send-<时间戳>.jsonl \
+     --device-log huawei-mate50pro=device-huawei.jsonl --device-log xiaomi-11=device-xiaomi.jsonl \
+     --out spike-01-report.md
+   ```
+   报告输出逐小时到达矩阵与 SC1 判定行（全到达 = PASS，可区分第几小时断线）；双设备（华为 Mate 50 Pro + 小米 11，D-84）用多个 `--device-log name=path` 传参出总表，报告按「华为系 ROM（HarmonyOS）/小米（MIUI）」口径记录。
+
+### 引导核对清单（P11——spike 前置逐项核对并截图）
+
+锁屏前逐项核对，每项**截图存档**随 spike 报告归档（结论污染源排除——Pitfall 11：只开白名单不核对这些开关，spike 结论会被污染）：
+
+| # | 项目 | 核对点 |
+|---|------|--------|
+| ① | 通知权限 | 系统设置中 PushHub 通知权限已授权（POST_NOTIFICATIONS 运行时授权——未授权时通知静默丢弃） |
+| ② | 电池优化白名单 | PushHub 已加入电池优化白名单（设置 → 应用 → PushHub → 电池 → 不受限制） |
+| ③ | 小米（MIUI）专属 | 自启动已开；省电策略「无限制」；锁屏后台运行允许 |
+| ④ | 华为系（HarmonyOS）专属 | 启动管理三开关全开（自启动/关联启动/后台活动）；「显示锁屏通知」「后台弹出界面」两个独立开关已核对（独立于通知权限的 ROM 级开关） |
+| ⑤ | FGS 常驻 | 通知栏可见 PushHub 常驻通知（连接状态汇总文本）——常驻通知消失即 FGS 被杀的第一现场 |
+
+> 警示信号（Pitfall 11）：锁屏无通知但解锁后通知中心有 → 独立开关未开，spike 结论无效需重跑。
+
+### 安卓端发布记录
+
+| 版本 | versionCode | 时间 (UTC) | 产物 | 回归结果 |
+|------|------------|-----------|------|---------|
