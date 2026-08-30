@@ -874,7 +874,7 @@ test("D-41 全链路 journey：登录→建频道→建 Send Key→发消息→�
   });
   await expect(skCard).toHaveCount(1);
   const skCurl = await skCard.locator(".snippet-code").textContent();
-  const keyMatch = skCurl.match(/Bearer (phs_[0-9A-Za-z]{32})/);
+  const keyMatch = skCurl?.match(/Bearer (phs_[0-9A-Za-z]{32})/);
   expect(keyMatch).not.toBeNull();
   const journeyKey = keyMatch![1];
 
