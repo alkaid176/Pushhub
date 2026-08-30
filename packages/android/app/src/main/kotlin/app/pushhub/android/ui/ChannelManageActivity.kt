@@ -96,9 +96,11 @@ class ChannelManageActivity : AppCompatActivity() {
                 try {
                     configStore.updateChannel(channel.id, name, key)
                     restartPushHubService(this)
+                } catch (e: ConfigError.DuplicateChannel) {
+                    // 静态短句反馈（不静默吞——用户需知更新为何未生效）。
+                    android.widget.Toast.makeText(this, "已存在同名频道", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (e: ConfigError) {
-                    // 上限/重名在此路径不可达（编辑不改数量；撞名已被 UI 输入容许——
-                    // 静默不落盘，列表下次刷新回真值）。
+                    // id 不存在（并发删除）——列表刷新回真值。
                 }
                 listAdapter.submit(configStore.load().channels)
             }
