@@ -109,7 +109,7 @@ node scripts/make-portable.mjs        # ② 便携版整理（exe + README → d
 | 版本 | 时间 (UTC) | 产物 | 回归结果 |
 |------|-----------|------|---------|
 | 0.1.0 | 2026-08-29 | NSIS `PushHub_0.1.0_x64-setup.exe` + `dist/portable/` | cargo test 146/146 + 桌面 E2E 6/6（tracer/render/reply-chain/reconnect/close-window/wizard）；实机人工项（上表 ①-⑤）待阶段末 UAT 批量复核 |
-| 0.1.1 | 2026-08-29 | NSIS `PushHub_0.1.1_x64-setup.exe` + `dist/portable/` | cargo test 147/147（+1 TLS 分支护栏：裸 TcpListener 先收 ClientHello 再断开 → 分类 Err 不 panic）+ 桌面 E2E 6/6（含 wizard 新增 https:// 失败路径用例——TLS 分支常驻哨兵）；**G-05-5 修复**：rustls ring provider——修复前向导对 https:// 服务端地址点「验证连通」（及任何配置 https:// 服务端频道的 wss:// 主连接）rustls 无 crypto provider panic，release `panic=abort` 下全进程静默闪退；**UAT Test 5 实机复测待验**：验证连通不闪退 + D-71 首关提示 |
+| 0.1.1 | 2026-08-29 | NSIS `PushHub_0.1.1_x64-setup.exe` + `dist/portable/`（2026-08-30 源码零变更重建：setup.exe SHA256 `9890e7f0…6fc81`） | cargo test 147/147（+1 TLS 分支护栏：裸 TcpListener 先收 ClientHello 再断开 → 分类 Err 不 panic）+ 桌面 E2E 6/6（含 wizard 新增 https:// 失败路径用例——TLS 分支常驻哨兵）；**G-05-5 修复**：rustls ring provider——修复前向导对 https:// 服务端地址点「验证连通」（及任何配置 https:// 服务端频道的 wss:// 主连接）rustls 无 crypto provider panic，release `panic=abort` 下全进程静默闪退；**UAT Test 5 实机复测待验**：验证连通不闪退 + D-71 首关提示 |
 
 ## 安卓端（Android）分发
 
@@ -211,4 +211,5 @@ adb install -r <apk 路径>          # -r 覆盖安装（保留应用数据/配�
 
 | 版本 | versionCode | 时间 (UTC) | 产物 | 回归结果 |
 |------|------------|-----------|------|---------|
+| 0.1.1 | 2 | 2026-08-30 | `app-release.apk` — 6,672,512 字节，SHA256 `2B0273522D9A1AE9861455EFA08C4B95A3D32E6A7D1648C6A2774EEC89B249FA`（同 0.1.0 证书签名）；相对 0.1.0 修复合入：Banner 虚构控件崩溃（f97ba96）/ RomGuide 浮动通知补项（840d5df）/ 冷启动历史与回复挂载竞态（50300fe）/ 正文点击双陷阱（10ff701+df16df7） | JVM 全量 **196/196 绿**；debug 载体（versionCode 2）已过小米 11 真机 UAT 8/9（SC1 spike PASS、回复链闭环、正文点击实证）；**待真机项**：release 包冒烟四步（UAT-5）+ 华为侧 spike |
 | 0.1.0 | 1 | 2026-08-30 | `app-release.apk` — 6,671,332 字节，SHA256 `1D7E1CB9FF19C48480F56AFA80327A669719FF1BE9A6C51C740B62F9380D330E`，APK Signature Scheme v2（证书 DN `CN=PushHub Android Release, OU=PushHub, O=dyun, C=CN`，cert SHA-256 `09779dce…99452b`）；正式图标套件首发（自适应前景/monochrome 像素 P + 背景 #1B1E2B + 通知图标 P 定稿） | 构建侧：assembleRelease v2 签名验证通过 + git 零密钥泄漏 + 签名门负例实测（缺环境变量时 debug 不受影响、release 响亮失败列变量名）；JVM 全量 **196/196 绿** + debug/release 双构建成功（debug 8,456,077 字节）。**待真机项（全部 pending spike 设备在场）**：release 真机冒烟四步（Pitfall 10 同构性实证）+ connectedDebugAndroidTest + 实机人工验收清单 ①-⑤ |

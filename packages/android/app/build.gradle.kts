@@ -57,9 +57,9 @@ android {
         applicationId = "app.pushhub.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = 2
         // D-77：安卓端独立版本线（对齐桌面 0.1.x 先例）
-        versionName = "0.1.0"
+        versionName = "0.1.1"
     }
 
     signingConfigs {
