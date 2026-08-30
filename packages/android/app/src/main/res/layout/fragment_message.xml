@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MessageFragment 布局（06-06 Task 2，AND-03）——单频道消息界面：
+     RecyclerView 消息列表（空态文案覆盖层）+ 底部回复区容器（Task 3 填充）。
+     不做 SwipeRefresh（计划裁决：避免误触发）；滚动策略在 Fragment 代码层
+     （新消息且已在底部时跟随，上滑阅读历史不打断）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/message_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp" />
+
+        <TextView
+            android:id="@+id/empty_state"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="暂无消息——等待 Webhook 推送"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- 底部回复区容器（Task 3 填充：回复目标行 + 自定义输入 + 发送） -->
+    <LinearLayout
+        android:id="@+id/reply_area"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone" />
+</LinearLayout>

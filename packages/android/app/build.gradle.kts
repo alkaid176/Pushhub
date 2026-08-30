@@ -75,6 +75,10 @@ dependencies {
     implementation(libs.markwon.ext.strikethrough)
     implementation(libs.markwon.ext.tasklist)
 
+    // 06-06 Task 2：消息界面（MessageFragment——fragment-ktx viewLifecycleOwner/
+    // lifecycleScope；catalog 备位转消费）
+    implementation(libs.androidx.fragment)
+
     // JVM 测试：机器/协议纯逻辑 + fixtures 契约 + mockwebserver3 真实 WS 模拟
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
