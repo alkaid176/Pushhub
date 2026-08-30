@@ -67,6 +67,14 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.recyclerview)
 
+    // 06-06 Task 1：Markwon 四件（SC3——core 默认剥离 HtmlInline/HtmlBlock，不引
+    // markwon-html 即无 jsoup 无 HTML 执行路径，T-06-06-01；不引任何图片加载插件
+    // ——消息体远程图片渲染为链接文本，零自动第三方请求，T-06-06-03）
+    implementation(libs.markwon.core)
+    implementation(libs.markwon.ext.tables)
+    implementation(libs.markwon.ext.strikethrough)
+    implementation(libs.markwon.ext.tasklist)
+
     // JVM 测试：机器/协议纯逻辑 + fixtures 契约 + mockwebserver3 真实 WS 模拟
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
