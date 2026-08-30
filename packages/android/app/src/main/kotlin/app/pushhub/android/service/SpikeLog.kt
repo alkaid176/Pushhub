@@ -49,6 +49,23 @@ class SpikeLog(private val dir: File) {
         )
     }
 
+    /**
+     * 首拉/补拉批次事件（06-05）：独立事件类型 history_batch——不逐条记
+     * message_arrived（否则与实时帧混流污染 spike-report 对照：报告只消费
+     * message_arrived 作到达判定，history_batch 被其过滤逻辑忽略——连接健康
+     * 诊断用观测数据，非到达证据）。
+     */
+    fun historyBatch(channel: String, count: Int) {
+        append(
+            buildJsonObject {
+                put("ts", System.currentTimeMillis())
+                put("type", "history_batch")
+                put("channel", channel)
+                put("count", count)
+            },
+        )
+    }
+
     private fun append(event: JsonObject) {
         try {
             if (!dir.isDirectory) dir.mkdirs()

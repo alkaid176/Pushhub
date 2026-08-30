@@ -1,10 +1,22 @@
 package app.pushhub.android.service
 
+import app.pushhub.android.hub.ChannelHub
+import app.pushhub.android.hub.HubEvent
+import app.pushhub.android.machine.Buffer
+import app.pushhub.android.machine.Status
+import app.pushhub.android.protocol.AnsweredFrame
+import app.pushhub.android.protocol.HistoryFrame
+import app.pushhub.android.protocol.MessageFrame
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.nio.file.Files
 
 /**
  * 通知逻辑 JVM 纯逻辑测试（06-05 Task 1，AND-02）。
@@ -157,5 +169,176 @@ class NotificationLogicTest {
             "PendingIntent 标志须含 FLAG_IMMUTABLE",
             src.contains("PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE"),
         )
+    }
+
+    // ---- 双计数器与接线测试（06-05 Task 2——两流分离不变量锁定，Pitfall 9 / D-61/D-63）----
+
+    /** 计数假实现（ChannelWiring 依赖 Notifier 接口——JVM 脱真机计数）。 */
+    private class FakeNotifier : Notifier {
+        val shown = mutableListOf<String>()
+        val cancelled = mutableListOf<String>()
+
+        override fun show(
+            channelId: String,
+            channelName: String,
+            wid: String,
+            title: String?,
+            text: String,
+            priority: String,
+            createdAt: Long,
+        ) {
+            shown += wid
+        }
+
+        override fun cancel(wid: String) {
+            cancelled += wid
+        }
+    }
+
+    private fun msg(seq: Long, priority: String = "normal"): MessageFrame = MessageFrame(
+        v = 1,
+        wid = "m_w$seq",
+        seq = seq,
+        text = "text $seq",
+        priority = priority,
+        answered = false,
+        createdAt = 1_700_000_000 + seq,
+    )
+
+    private fun history(vararg seqs: Long): HistoryFrame = HistoryFrame(
+        v = 1,
+        messages = seqs.map { msg(it) },
+        oldestKeptSeq = seqs.min(),
+        hasMore = false,
+    )
+
+    private fun answered(wid: String): AnsweredFrame = AnsweredFrame(
+        v = 1,
+        wid = wid,
+        seq = 0,
+        answered = true,
+        answeredAt = 1_700_000_100,
+    )
+
+    /** 权限全开的装配（blocked=false 基线）。 */
+    private fun newWiring(
+        runtimeGranted: Boolean = true,
+        notificationsEnabled: Boolean = true,
+        sdkInt: Int = 34,
+        events: MutableList<HubEvent> = mutableListOf(),
+    ): Triple<ChannelWiring, FakeNotifier, ChannelHub> {
+        val hub = ChannelHub(
+            runtimePermissionGranted = { runtimeGranted },
+            notificationsEnabled = { notificationsEnabled },
+            sdkInt = { sdkInt },
+        )
+        val notifier = FakeNotifier()
+        val wiring = ChannelWiring(
+            channelId = "ch1",
+            channelName = "alerts",
+            buffer = Buffer(),
+            notifier = notifier,
+            hub = hub,
+            spikeLog = SpikeLog(Files.createTempDirectory("spike-test").toFile()),
+            refreshBlocked = hub::refreshNotificationsBlocked,
+            onStatusChanged = {},
+        )
+        // Unconfined 订阅使 tryEmit 同步送达（SharedFlow 无当前值语义——先挂监听）
+        val job = CoroutineScope(Dispatchers.Unconfined).launch { hub.events.collect { events += it } }
+        Runtime.getRuntime().addShutdownHook(Thread { job.cancel() })
+        return Triple(wiring, notifier, hub)
+    }
+
+    @Test
+    fun `dual counter mixed stream notifies exactly message count`() {
+        // 混合 history+message 事件序列（06-03 AdapterResyncTest 同款序列形态）：
+        // show 调用数恰等于 message 帧数、history 批次零通知——两流分离不变量。
+        val (wiring, notifier, _) = newWiring()
+        wiring.onStatus(Status.Online)
+        wiring.onHistory(history(1, 2))
+        wiring.onMessage(msg(3))
+        wiring.onHistory(history(4, 5))
+        wiring.onMessage(msg(6))
+        wiring.onAnswered(answered("m_w3"))
+
+        assertEquals("show 调用数恰等于 message 帧数", listOf("m_w3", "m_w6"), notifier.shown)
+        assertEquals("answered 恰取消同 wid（D-69）", listOf("m_w3"), notifier.cancelled)
+    }
+
+    @Test
+    fun `blocked notifications skip show but keep connection side effects`() {
+        // Pitfall 4：POST_NOTIFICATIONS 拒绝（API 33+ 路径）——notify 跳过，
+        // 缓冲/Hub 事件照常（连接功能不受影响），状态可查（UI 横幅数据源）。
+        val events = mutableListOf<HubEvent>()
+        val (wiring, notifier, hub) = newWiring(runtimeGranted = false, sdkInt = 34, events = events)
+        wiring.onMessage(msg(1))
+
+        assertEquals("被拒时零通知", 0, notifier.shown.size)
+        assertTrue("notificationsBlocked 状态为真", hub.notificationsBlocked.value)
+        assertEquals("Hub 事件照发（消息界面不受权限影响）", 1, events.size)
+
+        // API 33- 路径：系统总开关禁用同样阻断（双路计算——ChannelHub 版本分流）。
+        val (wiringOld, notifierOld, hubOld) = newWiring(notificationsEnabled = false, sdkInt = 31)
+        wiringOld.onMessage(msg(1))
+        assertEquals(0, notifierOld.shown.size)
+        assertTrue(hubOld.notificationsBlocked.value)
+    }
+
+    @Test
+    fun `onStatus publishes hub state and invokes callback`() {
+        // onStatus → ChannelHub.channelStatus 写入 + Service 回调（FGS 汇总更新口）。
+        var seen: Status? = null
+        val hub = ChannelHub({ true }, { true }, { 34 })
+        val wiring = ChannelWiring(
+            channelId = "ch1",
+            channelName = "alerts",
+            buffer = Buffer(),
+            notifier = FakeNotifier(),
+            hub = hub,
+            spikeLog = SpikeLog(Files.createTempDirectory("spike-test").toFile()),
+            refreshBlocked = {},
+            onStatusChanged = { seen = it },
+        )
+        wiring.onStatus(Status.Reconnecting)
+        assertEquals(Status.Reconnecting, hub.channelStatus.value["ch1"])
+        assertEquals(Status.Reconnecting, seen)
+    }
+
+    @Test
+    fun `history and answered write buffer with no notification path`() {
+        // 缓冲接线（D-62）：history 批次与 answered 原位更新进缓冲，全程零通知。
+        val buffer = Buffer()
+        val hub = ChannelHub({ true }, { true }, { 34 })
+        val notifier = FakeNotifier()
+        val wiring = ChannelWiring(
+            channelId = "ch1",
+            channelName = "alerts",
+            buffer = buffer,
+            notifier = notifier,
+            hub = hub,
+            spikeLog = SpikeLog(Files.createTempDirectory("spike-test").toFile()),
+            refreshBlocked = {},
+            onStatusChanged = {},
+        )
+        wiring.onHistory(history(1, 2, 3))
+        wiring.onMessage(msg(4))
+        wiring.onAnswered(answered("m_w4"))
+        assertEquals(listOf(1L, 2L, 3L, 4L), buffer.seqs())
+        assertTrue("answered 原位更新生效", buffer.snapshot().messages.last().answered)
+        assertEquals("仅实时帧一条通知", listOf("m_w4"), notifier.shown)
+    }
+
+    @Test
+    fun `onHistory branch has no notifier call in source`() {
+        // 源码结构断言（acceptance criteria）：ChannelWiring.onHistory 分支零
+        // 通知调用——结构性两流分离（非仅测试行为锁定）。
+        val file = File("src/main/kotlin/app/pushhub/android/service/PushHubService.kt")
+        assertTrue("源文件应存在（测试工作目录 = packages/android/app）", file.isFile)
+        val src = file.readText()
+        val match = Regex("override fun onHistory\\([\\s\\S]*?\\n    }").find(src)
+        assertTrue("onHistory 覆写存在", match != null)
+        val body = match!!.value
+        assertFalse("onHistory 分支不得调用 notifier.show", body.contains("notifier."))
+        assertFalse("onHistory 分支不得调用 router", body.contains("router."))
     }
 }
