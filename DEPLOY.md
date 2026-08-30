@@ -134,6 +134,32 @@ gradlew.bat assembleRelease       # release APK（06-08 起经环境变量注入
 | debug APK | `packages/android/app/build/outputs/apk/debug/app-debug.apk` | v1 minify=false，debug/release 行为同构（Pitfall 10——06-08 release 出包复验） |
 | release APK | `packages/android/app/build/outputs/apk/release/app-release.apk` | 正式分发。签名配置经三环境变量注入（`PUSHHUB_KEYSTORE` / `PUSHHUB_KEYSTORE_PASSWORD` / `PUSHHUB_KEY_PASSWORD`，keystore 在仓库外 `D:/AIworkspaces/keys/pushhub-android.jks`，alias `pushhub`）——缺失任一且构建请求 release 任务时响亮失败（列出缺失变量名，不打印值），绝不回退无签名产出（T-06-08-01） |
 
+### 发布前回归（自动化）
+
+```bash
+cd packages/android
+gradlew.bat :app:testDebugUnitTest    # ① JVM 全量
+gradlew.bat :app:assembleDebug        # ② debug 构建
+gradlew.bat :app:assembleRelease      # ③ release 构建（需签名三环境变量，见上）
+# ④ 设备在场时（spike 真机连接）：
+gradlew.bat :app:connectedDebugAndroidTest
+```
+
+- ① JVM 全量 06-08 收口基线 **196/196 绿**（24 套件：fixtures 契约 / 机器七序列 / 缓冲 / adapter（E2E+并发+failover+resync）/ manager+hub / 配置存储 / 通知逻辑 / 渲染 / 回复 / 深链 / 向导+RomGuide / tracer）。
+- ④ instrumentation 属真机项——**当前 pending**（依赖 spike 真机在场，06-05 过夜 spike 完成后补跑）。
+
+### 实机人工验收清单（阶段末 UAT 批量复核——需真机在场）
+
+| # | 项目 | 步骤 | 关联 |
+|---|------|------|------|
+| ① | 生产端到端冒烟四步 | 经生产频道 Send Key 发带 options 消息（`scripts/smoke.mjs` 或 `spike-send.mjs` 单发模式）→ 真机锁屏收通知 → 点通知 deep link 定位该消息 → 点快捷选项回复 → 测试页/另一客户端确认 answered 状态与回复内容实时同步；四步各记时间戳 | AND-01~05/D-69 |
+| ② | release 同构性冒烟 | `adb uninstall app.pushhub.android`（签名不同，数据仅配置重走向导）→ 装 release 包 → 重跑 ① 四步 | Pitfall 10/G-05-5 |
+| ③ | 锁屏通知可见性 | 锁屏状态收 high/normal 档消息 → 锁屏直接可见频道名 + 消息内容（公开显示） | D-88 |
+| ④ | 通道设置入口核对 | 系统设置 → 应用 → PushHub → 通知：每频道「高/中/低」三通道存在且可独立调整（每频道静音的系统级落点） | D-87/D-70 |
+| ⑤ | 正式图标核验 | 桌面自适应图标（像素 P + 深底 #1B1E2B）与状态栏通知图标（单色 P）渲染正确；Android 13+ 主题取色图标不破形 | 06-08 Task 1 |
+
+**当前状态（2026-08-30）：①-⑤ 全部 pending**——等待 spike 真机在场（06-05 装机 + 过夜 spike 完成后随 SC1 收口一并执行）。
+
 ### 装机（adb）
 
 ```bash
@@ -163,6 +189,8 @@ adb install -r <apk 路径>          # -r 覆盖安装（保留应用数据/配�
    ```
    报告输出逐小时到达矩阵与 SC1 判定行（全到达 = PASS，可区分第几小时断线）；双设备（华为 Mate 50 Pro + 小米 11，D-84）用多个 `--device-log name=path` 传参出总表，报告按「华为系 ROM（HarmonyOS）/小米（MIUI）」口径记录。
 
+> spike 工具复用（06-08 收口登记）：D-86 失败退路触发重跑时无需新工具——按上方三步原样复用本节流程（`spike-send.mjs` 发送侧 + 真机日志导出 + `spike-report.mjs` 出报告），仅引导配置修正（P11 清单/RomGuide 文案）后重跑一轮（最多一轮）。
+
 ### 引导核对清单（P11——spike 前置逐项核对并截图）
 
 锁屏前逐项核对，每项**截图存档**随 spike 报告归档（结论污染源排除——Pitfall 11：只开白名单不核对这些开关，spike 结论会被污染）：
@@ -181,4 +209,4 @@ adb install -r <apk 路径>          # -r 覆盖安装（保留应用数据/配�
 
 | 版本 | versionCode | 时间 (UTC) | 产物 | 回归结果 |
 |------|------------|-----------|------|---------|
-| 0.1.0 | 1 | 2026-08-30 | `app-release.apk` — 6,671,332 字节，SHA256 `1D7E1CB9FF19C48480F56AFA80327A669719FF1BE9A6C51C740B62F9380D330E`，APK Signature Scheme v2（证书 DN `CN=PushHub Android Release, OU=PushHub, O=dyun, C=CN`，cert SHA-256 `09779dce…99452b`）；正式图标套件首发（自适应前景/monochrome 像素 P + 背景 #1B1E2B + 通知图标 P 定稿） | 构建侧：assembleRelease v2 签名验证通过 + git 零密钥泄漏（06-08 Task 1）；JVM 全量回归与 debug/release 双构建 = 06-08 Task 3（见「发布前回归」）；**release 真机冒烟四步（连接/收消息/通知/回复）待 spike 真机在场执行**（Pitfall 10 同构性实证——桌面 G-05-5 教训的结构化复验） |
+| 0.1.0 | 1 | 2026-08-30 | `app-release.apk` — 6,671,332 字节，SHA256 `1D7E1CB9FF19C48480F56AFA80327A669719FF1BE9A6C51C740B62F9380D330E`，APK Signature Scheme v2（证书 DN `CN=PushHub Android Release, OU=PushHub, O=dyun, C=CN`，cert SHA-256 `09779dce…99452b`）；正式图标套件首发（自适应前景/monochrome 像素 P + 背景 #1B1E2B + 通知图标 P 定稿） | 构建侧：assembleRelease v2 签名验证通过 + git 零密钥泄漏 + 签名门负例实测（缺环境变量时 debug 不受影响、release 响亮失败列变量名）；JVM 全量 **196/196 绿** + debug/release 双构建成功（debug 8,456,077 字节）。**待真机项（全部 pending spike 设备在场）**：release 真机冒烟四步（Pitfall 10 同构性实证）+ connectedDebugAndroidTest + 实机人工验收清单 ①-⑤ |
