@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 自适应图标背景纯色占位 -->
-    <color name="ic_launcher_background">#1E6BFF</color>
+    <!-- 自适应图标背景纯色：与桌面端 app-icon.png 底色（gen-icon.mjs BG #1B1E2B）
+         同值——跨端品牌一致性（06-08 正式定稿，替换 06-01 占位蓝） -->
+    <color name="ic_launcher_background">#1B1E2B</color>
 </resources>

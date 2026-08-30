@@ -1,15 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- PushHub 通知小图标占位（06-05 Task 1——单色 vector 白描风格，裁量区：
-     正式图标 06-08 统一自桌面 app-icon.png 生成）。
-     通知小图标纪律：纯 alpha 形状（白色填充、透明背景）——系统按通道/主题
-     自动着色；含色块的图标在状态栏渲染为灰块。路径为 Material notifications
-     铃铛（24dp 标准网格）。 -->
+<!-- 正式通知小图标（06-08 Task 1 定稿，替换 06-05 Material 铃铛占位）：品牌像素 P
+     单色版——与自适应图标前景同一 12x16 点阵（1.5dp 格，18x24dp 居中于 24dp 网格）。
+     通知小图标纪律：纯 alpha 形状（白色填充、透明背景）——系统按通道/主题自动着色；
+     含色块的图标在状态栏渲染为灰块。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- 顶横杠 + 左竖干（一笔 L 形：x3-21/y0-3 ∪ x3-7.5/y0-24） -->
     <path
         android:fillColor="@android:color/white"
-        android:pathData="M12,22c1.1,0 2,-0.9 2,-2h-4c0,1.1 0.89,2 2,2zm6,-6v-5c0,-3.07 -1.64,-5.64 -4.5,-6.32V4c0,-0.83 -0.67,-1.5 -1.5,-1.5s-1.5,0.67 -1.5,1.5v0.68C7.63,5.36 6,7.92 6,11v5l-2,2v1h16v-1l-2,-2z" />
+        android:pathData="M3,0 L21,0 L21,3 L7.5,3 L7.5,24 L3,24 Z" />
+    <!-- 碗右壁（cols 9-11, rows 2-7） -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M16.5,3 L21,3 L21,12 L16.5,12 Z" />
+    <!-- 中横杠右段（rows 6-7） -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M7.5,9 L21,9 L21,12 L7.5,12 Z" />
 </vector>
