@@ -117,7 +117,7 @@ class NotificationInstrumentTest {
         val counting = CountingNotifier(router)
         val wiring = ChannelWiring(
             channelId = "ch_itest",
-            channelName = "instrument-test",
+            channelName = { "instrument-test" },
             buffer = Buffer(),
             notifier = counting,
             hub = hub,
