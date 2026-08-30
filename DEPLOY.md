@@ -123,6 +123,8 @@ node scripts/make-portable.mjs        # ② 便携版整理（exe + README → d
 
 ### 构建命令与产物路径
 
+环境前置：**JDK 17+**（Gradle 9.5 / AGP 9.3 要求）。Gradle 按标准顺序解析 JVM：`JAVA_HOME` 环境变量 → `PATH` 中的 `java`。本机 `JAVA_HOME` 未设且需指定特定 JDK 时，将 `org.gradle.java.home=<JDK 路径>` 写入**用户级** `~/.gradle/gradle.properties`（不入库——入库的 `packages/android/gradle.properties` 不携带机器特定路径，否则他机/CI 构建即失败；路径用正斜杠）。
+
 ```bash
 cd packages/android
 gradlew.bat assembleDebug         # debug APK（spike 与日常装机载体）
