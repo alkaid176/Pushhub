@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 06-04：向导/频道管理页专用 Material3 主题（D-83 View 体系 + Material
+         Components——TextInputLayout/MaterialAlertDialog 要求 Material 主题；
+         MainActivity 维持 appcompat 基座占位，正式视觉 06-06 裁量区处理）。 -->
+    <style name="Theme.PushHub.Material" parent="Theme.Material3.DayNight.NoActionBar" />
+</resources>
