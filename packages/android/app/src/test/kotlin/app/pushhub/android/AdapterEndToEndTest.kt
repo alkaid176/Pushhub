@@ -98,6 +98,15 @@ class AdapterEndToEndTest {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 serverReceived += text
             }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                // 06-03 修复：OkHttp 服务端默认 onClosing 不回应——客户端机器
+                // Destroy 臂发起 ws.close(1000) 后等不到服务端 close 回应，
+                // mockwebserver3 队列挂起导致 server.close() 超时（06-01 时
+                // Destroy 空臂不关 ws 故未暴露）。标准 OkHttp 服务端模式：回
+                // close 完成优雅握手。
+                webSocket.close(code, reason)
+            }
         }
         // mockwebserver3 5.5.0 实际 API 为 webSocketUpgrade(listener) 方法
         //（RESEARCH 示例写的 webSocketListener 是私有属性——本会话 javap 实查修正）。
@@ -134,6 +143,8 @@ class AdapterEndToEndTest {
                 override fun onError(error: ErrorPayload) {
                     callbackTrace += "error:${error.message}"
                 }
+
+                override fun onAnswered(frame: app.pushhub.android.protocol.AnsweredFrame) = Unit
             },
         )
 
@@ -185,6 +196,8 @@ class AdapterEndToEndTest {
                 override fun onError(error: ErrorPayload) {
                     errors += error
                 }
+
+                override fun onAnswered(frame: app.pushhub.android.protocol.AnsweredFrame) = Unit
             },
         )
         try {

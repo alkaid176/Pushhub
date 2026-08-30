@@ -8,31 +8,37 @@ import app.pushhub.android.protocol.ServerFrame
 import app.pushhub.android.protocol.SYNC_LIMIT_DEFAULT
 
 /**
- * 连接生命周期纯状态机（06-01 Task 3 tracer，D-59 第三端）。
+ * 连接生命周期纯状态机（06-01 tracer → 06-03 全语义，D-59 第三端）。
  *
  * packages/web-sdk/src/connection-machine.ts（58-73 常量、84-107 词汇表、246-273
- * handleHistory、200-211/332-345 fatal 语义）的 Kotlin 同构移植，结构对齐
- * packages/desktop/src-tauri/src/machine/mod.rs（Rust 第二端先例）。
+ * handleHistory、189-196 forceReconnect、200-211/332-345 fatal 语义、288-306
+ * Disconnect/Destroy、362-369 死线、373-388 VISIBILITY 探活）的 Kotlin 同构移植，
+ * 结构对齐 packages/desktop/src-tauri/src/machine/mod.rs（Rust 第二端先例）。
  *
  * 形态：输入事件流 → input() → 输出动作流。模块纯逻辑：零 OkHttp/协程/Android
  * 依赖——随机数经构造注入（测试确定性）、定时器经 Timer 事件回喂（adapter 按
  * Schedule 动作创建）。**机器自身零并发防线**：adapter 的单线程 feed 收敛是唯一
  * 并发防线（Pitfall 8，TS→Kotlin 移植唯一新增防线——本模块不设任何同步原语）。
  *
- * tracer 臂位子集（完整词汇表 + 六条 tracer 序列；其余臂位返回空动作并注释
- * 06-03 填充——计划内功能性缺口，非架构缺口）：
- *  - Connect → EmitStatus(Connecting) + CreateSocket
- *  - WsOpen → attempt 归零 + syncBase=dedup.last 快照 + awaitingInitialHistory
- *    + 武装 Heartbeat(30s) + EmitStatus(Online)
- *  - WsClose → cancelAll；manuallyClosed/fatalStopped → Offline，否则
- *    EmitStatus(Reconnecting) + Schedule(Reconnect, full jitter)
- *  - WsFail → fatal 族（仅 Connecting 态消费：cancelAll + EmitError(fatal) +
- *    Offline 停机，不武装任何定时器；此后任意事件零动作）
- *  - Timer(Reconnect) → CreateSocket + EmitStatus(Connecting)（武装集过滤幽灵）
- *  - Timer(Heartbeat) → SendPing + 武装 PongDeadline(10s) + 重武装 Heartbeat
- *  - Frame(Ok: pong) → 取消两类死线；message → shouldDeliver 过滤 EmitMessage；
- *    history → fresh 过滤 EmitHistory + 首拉无条件 SendSync(since=syncBase)
- *  - Frame(Fatal) → EmitError(fatal) + CloseSocket(Fatal) + Offline 停机
+ * 七条序列臂位（06-03 全量——每条标注 TS 源行号）：
+ *  1. 连接/退避：Connect → Connecting + CreateSocket；WsClose（意外）→ Reconnecting
+ *     + full jitter 退避（delay = random() * min(60s, 500*2^attempt)）；WsOpen →
+ *     attempt 归零 + syncBase=dedup.last 快照 + 武装 Heartbeat(30s)（307-316）
+ *  2. 心跳死线：Timer(Heartbeat) → SendPing + 武装 PongDeadline(10s) + 重武装
+ *     Heartbeat；pong 取消两类死线；PongDeadline 到期 → forceReconnect
+ *     （CloseSocket(Deadline) + 退避族，362-369）
+ *  3. 重连补拉确定序列（handleHistory，246-273）：fresh 过滤 EmitHistory →
+ *     首拉无条件 SendSync(since=syncBase) → has_more 以 dedup.last 续翻 →
+ *     连续 SYNC_PAGE_MAX=100 页 EmitError(sync_page_limit) 且连接保持
+ *  4. 探活（D-27，373-388）：Visibility(true) → SendPing + Probe(5s) + 心跳接管；
+ *     Visibility(false) → 取消心跳与探活；Probe 到期 → forceReconnect
+ *  5. fatal 停机零复活（200-211/332-345）：v!==1 帧 / WsFail → EmitError(fatal) +
+ *     CloseSocket + Offline 停机，此后任意事件零动作（Connect 显式复位除外）
+ *  6. 手动断开（288-297）：Disconnect → manuallyClosed=true + CloseSocket(Manual)
+ *     + Offline；此后 WsClose 不再武装重连（直到下一次 Connect 复位）
+ *  7. Destroy（298-306）：Offline 终态标签 + 取消全部定时器 + 零后续动作
+ *  另：Frame(ack) 静默零动作（226-229）；Frame(answered) 不经 SeqDedup 原样
+ *  EmitAnswered（219-225，D-17）；Frame(error) 非致命 EmitError 透传（236-239）。
  */
 
 // ---- 常量（connection-machine.ts:58-73 逐条 verbatim；数值变更即协议事件——
@@ -161,10 +167,25 @@ class ConnectionMachine(
                 out += MachineAction.CreateSocket
             }
             is MachineEvent.Disconnect -> {
-                // 06-03 填充：手动关停（cancelAll + CloseSocket(Manual) + Offline 可再连）
+                // 手动关停（connection-machine.ts:288-297）：manuallyClosed 置位后
+                // WsClose 不再武装重连（直到下一次 Connect 复位）。
+                if (state == MachineState.Destroyed) return
+                manuallyClosed = true
+                cancelAllTimers(out)
+                if (state == MachineState.Connecting || state == MachineState.Online) {
+                    out += MachineAction.CloseSocket(CloseReason.Manual)
+                }
+                enter(MachineState.Offline, out)
             }
             is MachineEvent.Destroy -> {
-                // 06-03 填充：终局销毁（cancelAll + CloseSocket(Manual) + Destroyed 终态）
+                // 终局销毁（connection-machine.ts:298-306）：Destroyed 终态，
+                // 此后任意事件零动作。
+                if (state == MachineState.Destroyed) return
+                cancelAllTimers(out)
+                if (state == MachineState.Connecting || state == MachineState.Online) {
+                    out += MachineAction.CloseSocket(CloseReason.Manual)
+                }
+                enter(MachineState.Destroyed, out)
             }
             is MachineEvent.WsOpen -> {
                 if (state != MachineState.Connecting) return
@@ -218,14 +239,32 @@ class ConnectionMachine(
                         }
                     }
                     TimerKind.PongDeadline, TimerKind.Probe -> {
-                        // 06-03 填充：死线超时 forceReconnect（CloseSocket(Deadline) +
-                        // 退避重连，不等 WsClose——假活连接不会自己产生事件）
+                        // 死线超时（周期心跳 pong 死线 / D-27 探活死线，
+                        // connection-machine.ts:362-369）：连接判假死，立即强制重连
+                        // （不等 WsClose）——假活连接不会自己产生事件，恢复后按
+                        // 重连确定序列补拉。
+                        if (state == MachineState.Online) {
+                            forceReconnect(out)
+                        }
                     }
                 }
             }
             is MachineEvent.Visibility -> {
-                // 06-03 填充（D-27 探活：visible → SendPing + Probe(5s) + 心跳接管；
-                // hidden → 取消心跳与探活）
+                // D-27 探活（connection-machine.ts:373-388，TS 权威源方向——
+                // 计划 Task 2c 文字与 TS 相反，按 canonical_refs 逐行为对齐目标实现）：
+                //  - visible=true：立即 ping + 5s 探活死线（后台冻结恢复路径——
+                //    冻结期间连接可能已被中间设备掐断，visible 瞬间主动探测而非等
+                //    30s 周期）+ 心跳周期接管恢复（hidden 期间被取消）；
+                //  - visible=false：取消心跳周期与探活（页面冻结省额度，恢复时探活接管）。
+                if (state != MachineState.Online) return
+                if (event.visible) {
+                    out += MachineAction.SendPing
+                    armTimer(TimerKind.Probe, PROBE_DEADLINE_MS, out)
+                    armTimer(TimerKind.Heartbeat, HEARTBEAT_INTERVAL_MS, out)
+                } else {
+                    cancelTimer(TimerKind.Heartbeat, out)
+                    cancelTimer(TimerKind.Probe, out)
+                }
             }
             is MachineEvent.Frame -> handleFrame(event.result, out)
         }
@@ -258,16 +297,34 @@ class ConnectionMachine(
                     }
                 }
                 is ServerFrame.History -> handleHistory(frame, out)
+                is ServerFrame.Answered -> {
+                    // 04-03（connection-machine.ts:219-229）：明确在 SeqDedup 之外——
+                    // answered 是独立帧而非 message 帧（D-17 硬约束：SDK 按 seq 去重
+                    // 会吞同 seq 重发）。同 wid 重复扇出原样透传，幂等消化归宿主。
+                    out += MachineAction.EmitAnswered(frame)
+                }
+                is ServerFrame.Ack -> {
+                    // 04-01 Q4 定稿（connection-machine.ts:226-229）：ack 静默零动作——
+                    // answered 扇出即公共确认，回复者本人由随后的 answered 自证。
+                }
+                is ServerFrame.Error -> {
+                    // 服务端 WS 错误帧（invalid_frame 等，connection-machine.ts:236-239）
+                    // ——非致命透传，连接保持。
+                    out += MachineAction.EmitError(
+                        ErrorPayload(message = frame.message, code = frame.code),
+                    )
+                }
             }
         }
     }
 
     /**
-     * 补拉确定序列 tracer 版（connection-machine.ts handleHistory 对齐）：
+     * 补拉确定序列全量（connection-machine.ts:246-273 逐行对齐）：
      *  - 帧结构原样（oldest_kept_seq/has_more 透传），messages 只含宿主未见消息
-     *    （shouldDeliver 唯一过滤闸门）；
-     *  - 首拉 → 无条件 SendSync since=连接前游标（缺口可深于首拉 50 条，Pitfall 5）。
-     *    has_more 续翻与 SYNC_PAGE_MAX 上限逻辑 06-03 补。
+     *    （shouldDeliver 唯一过滤闸门，D-16×D-17 交集）；
+     *  - 首拉 → 无条件 SendSync since=连接前游标（缺口可深于首拉 50 条，Pitfall 5）；
+     *  - has_more → 以 dedup.last 续翻（连续 SYNC_PAGE_MAX=100 页放弃并
+     *    EmitError，T-02-06 防服务端异常死循环——连接保持）。
      */
     private fun handleHistory(frame: HistoryFrame, out: MutableList<MachineAction>) {
         val fresh = frame.messages.filter { dedup.shouldDeliver(it.seq) }
@@ -279,8 +336,32 @@ class ConnectionMachine(
             out += MachineAction.SendSync(since = syncBase, limit = SYNC_LIMIT_DEFAULT)
             return
         }
-        // 06-03 填充：has_more 以 dedup.last 续翻；连续 SYNC_PAGE_MAX=100 页放弃并
-        // EmitError（T-02-06 防服务端异常死循环）
+        if (frame.hasMore) {
+            if (syncCount >= SYNC_PAGE_MAX) {
+                // T-02-06：异常翻页死循环防线——放弃补拉并报错，连接保持。
+                out += MachineAction.EmitError(
+                    ErrorPayload(
+                        message = "sync pagination exceeded $SYNC_PAGE_MAX pages; giving up catch-up",
+                        code = "sync_page_limit",
+                    ),
+                )
+                return
+            }
+            syncCount += 1
+            out += MachineAction.SendSync(since = dedup.last, limit = SYNC_LIMIT_DEFAULT)
+        }
+    }
+
+    /**
+     * 意外失活（pong/探活死线，connection-machine.ts:189-196）：立即走退避重连
+     * 路径（不等 WsClose 事件——假活连接不会自己产生事件）。
+     */
+    private fun forceReconnect(out: MutableList<MachineAction>) {
+        cancelAllTimers(out)
+        out += MachineAction.CloseSocket(CloseReason.Deadline)
+        enter(MachineState.Reconnecting, out)
+        armTimer(TimerKind.Reconnect, backoffDelay(), out)
+        attempt += 1
     }
 
     /** 武装定时器（替换语义：同种已武装则先 cancel 再 schedule）。 */
