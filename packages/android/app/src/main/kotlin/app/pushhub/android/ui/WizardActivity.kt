@@ -304,16 +304,21 @@ class WizardActivity : AppCompatActivity() {
 
     /**
      * 保存主体（verified 之后的生产路径——btnSave 点击与测试共用；测试直调
-     * 以绕过网络依赖）。ConfigError → 静态文案（上限/重名），保存不发生。
+     * 以绕过网络依赖）。ConfigError → 静态文案（上限/重名），配置零变更。
+     *
+     * WR-04 修复：先 addChannel（上限/重名校验在 ConfigStore 收口），通过后再
+     * 落盘 server/displayName——原顺序先 save 后 addChannel，校验失败时
+     * server/displayName 已半落盘（MODE_ADD 撞上限场景：用户以为保存整体未
+     * 发生，实际服务端地址已被改写）。
      */
     fun saveAndConnect() {
         val fields = currentFields()
         try {
+            configStore.addChannel(fields.name, fields.key)
             val config = configStore.load()
             config.server = fields.server
             config.displayName = fields.displayName.ifBlank { null }
             configStore.save(config)
-            configStore.addChannel(fields.name, fields.key)
         } catch (e: ConfigError.ChannelLimitReached) {
             statusText.text = ConnectTestText.SAVE_LIMIT_REACHED
             return
