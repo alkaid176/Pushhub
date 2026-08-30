@@ -18,6 +18,14 @@ sealed class HubEvent {
     data class Message(val channelId: String, val frame: MessageFrame) : HubEvent()
 
     data class Answered(val channelId: String, val frame: AnsweredFrame) : HubEvent()
+
+    /**
+     * 首拉/补拉批次到达（真机 UAT 实证修复——CR-03 数据流的 UI 通知缺口）：
+     * 历史只进 Buffer 不触发事件时，冷启动 Fragment 先渲染空快照、历史静默入
+     * 缓冲后 UI 永不重读——消息列表空白。本事件纯列表刷新信号，**不计未读**
+     * （Pitfall 9：补拉批次绝不角标爆炸）。
+     */
+    data class HistoryBackfilled(val channelId: String, val count: Int) : HubEvent()
 }
 
 /**
@@ -135,6 +143,11 @@ class ChannelHub(
     /** answered 事件（D-17 原样透传——UI 更新消息态/移除通知）。 */
     fun emitAnswered(channelId: String, frame: AnsweredFrame) {
         _events.tryEmit(HubEvent.Answered(channelId, frame))
+    }
+
+    /** 历史批次到达事件（UI 重读 buffer 快照的唯一信号——见 HubEvent.HistoryBackfilled）。 */
+    fun emitHistory(channelId: String, count: Int) {
+        _events.tryEmit(HubEvent.HistoryBackfilled(channelId, count))
     }
 
     /** 未读 +1（06-07 ChannelManager 消费——非当前频道的实时帧）。 */

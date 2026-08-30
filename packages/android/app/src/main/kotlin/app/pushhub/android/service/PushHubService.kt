@@ -86,9 +86,19 @@ class PushHubService : LifecycleService() {
 
         // ---- ChannelManager 多频道装配（06-07，D-79——每频道独立运行时）----
         val configStore = ConfigStore(filesDir)
+        val config = configStore.load()
         manager = ChannelManager(factory = productionFactory(configStore))
-        manager.syncFromConfig(configStore.load())
+        manager.syncFromConfig(config)
         updateFgsSummary()
+
+        // 回复挂载竞态兜底（真机 UAT 实证修复）：冷启动时 MainActivity 初始 tab
+        // 选择可能先于本 onCreate（installedHub() 为 null → setCurrentChannel 静默
+        // 丢失）→ currentChannelId 停留 null → 下方 collector 挂不上 adapter →
+        // 回复永远「未连接」直到用户手动切 tab。Service 侧兜底播种：仅当 UI
+        // 尚未写入时设为配置首频道——幂等，UI 随后的真实选择照常覆写。
+        if (hub.currentChannelId.value == null) {
+            config.channels.firstOrNull()?.let { hub.setCurrentChannel(it.id) }
+        }
 
         // 探活广播转发（D-27）：UI 可见性请求 → 逐频道 Visibility 事件
         // （StateFlow 当前值语义——service 装配前 UI 已 resume 的请求不丢）。
@@ -334,6 +344,9 @@ class ChannelWiring(
         // 绝不计未读（Pitfall 9：断线恢复补拉批次不角标爆炸）。
         for (m in frame.messages) buffer.push(m)
         spikeLog.historyBatch(channelId, frame.messages.size)
+        // UI 刷新信号（真机 UAT 实证修复）：冷启动 Fragment 先渲染空快照，历史
+        // 静默入缓冲后若无事发生则列表永久空白——发射纯刷新事件（不含未读语义）。
+        if (frame.messages.isNotEmpty()) hub.emitHistory(channelId, frame.messages.size)
     }
 
     override fun onAnswered(frame: AnsweredFrame) {

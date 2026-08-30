@@ -138,6 +138,11 @@ class MessageFragment : Fragment() {
 
                         is HubEvent.Answered ->
                             if (event.channelId == channelId) onAnswered(event.frame)
+
+                        is HubEvent.HistoryBackfilled ->
+                            // 首拉/补拉批次到达 → 重读 buffer 快照全量重建
+                            //（冷启动竞态修复：Fragment 先建、历史后到时不刷新即空白）。
+                            if (event.channelId == channelId) renderAll()
                     }
                 }
             }
