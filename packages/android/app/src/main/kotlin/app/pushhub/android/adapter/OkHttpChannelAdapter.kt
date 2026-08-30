@@ -125,6 +125,10 @@ class OkHttpChannelAdapter(
     /** 当前代际的 WebSocket 句柄（仅消费协程读写——feed 串行化保证）。 */
     private var ws: WebSocket? = null
 
+    /** destroy 已置位（openSocket 建连竞态兜底——CR-01：destroy 读取 ws 后才赋值的新句柄补取消）。 */
+    @Volatile
+    private var destroyed = false
+
     /** Schedule 动作产生的定时器 Job（同种替换：先 cancel 再武装）。 */
     private val timers = mutableMapOf<TimerKind, Job>()
 
@@ -151,11 +155,26 @@ class OkHttpChannelAdapter(
      */
     fun setVisibility(visible: Boolean) = feed(MachineEvent.Visibility(visible))
 
-    /** 终局销毁：Destroy 事件 + 串行队列关闭 + scope 取消（定时器一并收敛）。 */
+    /**
+     * 终局销毁：Destroy 事件入队 + 串行队列关闭 + **同步强制断连** + scope 取消
+     * （定时器一并收敛）。
+     *
+     * CR-01 修复：scope.cancel() 是同步取消——消费协程挂起在 receive 时，已入队
+     * 的 Destroy 在恢复点直接抛 CancellationException 被丢弃，状态机收不到
+     * Destroy → CloseSocket(Manual) 不执行 → 幽灵连接（FGS 停止后服务端视角
+     * 连接仍在线并继续推送）。断连因此**不依赖事件队列排空**：close 尽力走
+     * 优雅关闭，cancel 立即强制断开（不等优雅关闭握手）；OkHttpClient 的
+     * dispatcher 线程池一并 shutdown（不 shutdown 则空闲线程驻留进程）。
+     */
     fun destroy() {
+        destroyed = true
         feed(MachineEvent.Destroy)
         eventQueue.close()
+        val (code, reason) = closeCodeOf(CloseReason.Manual)
+        ws?.close(code, reason)
+        ws?.cancel()
         scope.cancel()
+        client.dispatcher.executorService.shutdown()
     }
 
     /** 事件入队（任意线程可调——OkHttp 回调线程/定时器协程/UI 线程）。 */
@@ -256,6 +275,11 @@ class OkHttpChannelAdapter(
                 if (gen == generation.get()) feed(MachineEvent.WsClose)
             }
         })
+        // destroy 竞态兜底（CR-01）：destroy() 读取 ws 之后本行才赋值的新句柄会
+        // 逃过 destroy 的同步断连（executor 已 shutdown 的同步拒绝由 OkHttp
+        // executeOn 内部转 onFailure，代际过滤后事件随关闭队列丢弃）——补一次
+        // 检查立即取消。
+        if (destroyed) ws?.cancel()
     }
 
     /**
