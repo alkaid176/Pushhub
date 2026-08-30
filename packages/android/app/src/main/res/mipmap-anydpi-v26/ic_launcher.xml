@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 最小自适应图标占位（minSdk 26 ⇒ anydpi-v26 覆盖全部设备，无需 PNG dpi 桶）。
+     正式图标 06-08 复用 packages/desktop/app-icon.png 再做（计划裁量区）。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

@@ -1,0 +1,250 @@
+package app.pushhub.android.adapter
+
+import app.pushhub.android.machine.ConnectionMachine
+import app.pushhub.android.machine.ErrorPayload
+import app.pushhub.android.machine.MachineAction
+import app.pushhub.android.machine.MachineEvent
+import app.pushhub.android.machine.Status
+import app.pushhub.android.machine.TimerKind
+import app.pushhub.android.machine.CloseReason
+import app.pushhub.android.protocol.HistoryFrame
+import app.pushhub.android.protocol.MessageFrame
+import app.pushhub.android.protocol.PROTOCOL_VERSION
+import app.pushhub.android.protocol.ReplyFrame
+import app.pushhub.android.protocol.SyncFrame
+import app.pushhub.android.protocol.lenientJson
+import app.pushhub.android.protocol.parseServerFrame
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import java.net.URLEncoder
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * ChannelEvents 回调接口（06-01 tracer 四回调）——后续 plan 的通知路由与 UI 的
+ * 同口订阅点（06-05 NotificationRouter / 06-06 消息界面均挂此口扩展）。
+ */
+interface ChannelEvents {
+    fun onStatus(status: Status)
+    fun onMessage(message: MessageFrame)
+    fun onHistory(frame: HistoryFrame)
+    fun onError(error: ErrorPayload)
+}
+
+/**
+ * 心跳出站帧（Pitfall 1，最高优先）：逐字节等于服务端 setWebSocketAutoResponse
+ * 匹配串（packages/server/src/chat-room.ts PING_FRAME 字面量）——字节常量直发，
+ * **禁运行时序列化构造**（键序/空格不受控即失配 → ping 被当作普通入站消息唤醒
+ * DO 计费处理 → 免费额度加速耗尽 + pong 死线误判假死循环重连）。
+ * 与 web-sdk pushhub.ts PING / 桌面端 adapter PING 三端一致。
+ */
+const val PING: String = """{"v":1,"type":"ping"}"""
+
+/**
+ * 连接 URL 构造（pushhub.ts 同构，Pitfall 6）。
+ *
+ * 前缀替换顺序：先 https→wss 后 http→ws（"http"→"ws" 后 s 保留的顺序坑）；
+ * 尾斜杠全部规整；密钥经 URL 编码（服务端路由 /api/ws/:key 逐段 decodeURIComponent，
+ * 键含保留字符必须先编码）。URLEncoder 的空格编码是 '+' 而路径段语义要求 %20——
+ * 编码后替换（encodeURIComponent 语义对齐）。
+ */
+fun buildWsUrl(serverUrl: String, channelKey: String): String {
+    val base = serverUrl.trim().trimEnd('/')
+    val wsBase = when {
+        base.startsWith("https") -> "wss" + base.removePrefix("https")
+        base.startsWith("http") -> "ws" + base.removePrefix("http")
+        else -> base
+    }
+    val encodedKey = URLEncoder.encode(channelKey, "UTF-8").replace("+", "%20")
+    return "$wsBase/api/ws/$encodedKey"
+}
+
+/**
+ * OkHttp WS + 协程定时器接线层（06-01 Task 3 tracer，D-59/D-60）——pushhub.ts /
+ * 桌面端 adapter/mod.rs 的 Kotlin 同构。
+ *
+ * 职责边界：连接生命周期语义全部在纯状态机（machine/ConnectionMachine）——本类
+ * 只做事件翻译与动作执行：
+ *  - **feed 单线程收敛（Pitfall 8，Kotlin 唯一新增防线）**：OkHttp 回调线程、
+ *    协程定时器线程只向 Channel send 入队；由 Dispatchers.Default
+ *    .limitedParallelism(1) 上的单消费协程串行调 machine.input 与动作分派——
+ *    机器自身零同步原语（TS 版依赖 JS 事件循环，Kotlin 必须显式串行化）；
+ *  - OkHttp 客户端不配置协议层心跳参数（应用层心跳由机器独占——双机制不互替，
+ *    机器死线逻辑只认应用层 pong）；
+ *  - 陈旧 socket 防护（代际号）：CreateSocket 自增 AtomicLong 代际；listener
+ *    回调先比对代际再 feed（旧连接的迟到事件不上机器）；
+ *  - onClosed/onFailure 一律 WsClose（握手失败/TLS/网络断——05-01 实证语义：
+ *    connect 失败走退避而非 fatal）；仅 Request URL 构造抛 IllegalArgumentException
+ *    （畸形 URL，确定性配置错误）时映射 WsFail（fatal 族停机）；
+ *  - close code 三档（pushhub.ts:353-367）：Fatal→1002 / Deadline→4000 / Manual→1000；
+ *  - 错误文案静态英文短句，不含 URL/密钥子串（密钥在路径段——T-06-01-01）。
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class OkHttpChannelAdapter(
+    private val machine: ConnectionMachine,
+    serverUrl: String,
+    channelKey: String,
+    private val events: ChannelEvents,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val client = OkHttpClient()
+
+    private val wsUrl: String = buildWsUrl(serverUrl, channelKey)
+
+    /** 事件串行队列（UNLIMITED——feed 只入队永不阻塞回调线程）。 */
+    private val eventQueue = Channel<MachineEvent>(Channel.UNLIMITED)
+
+    /** 单线程消费派发器（Pitfall 8：机器串行化的唯一并发防线）。 */
+    private val feedDispatcher = Dispatchers.Default.limitedParallelism(1)
+
+    /** 当前连接代际号（CreateSocket 自增；listener 回调据此过滤陈旧）。 */
+    private val generation = AtomicLong(0)
+
+    /** 当前代际的 WebSocket 句柄（仅消费协程读写——feed 串行化保证）。 */
+    private var ws: WebSocket? = null
+
+    /** Schedule 动作产生的定时器 Job（同种替换：先 cancel 再武装）。 */
+    private val timers = mutableMapOf<TimerKind, Job>()
+
+    init {
+        scope.launch(feedDispatcher) {
+            for (event in eventQueue) {
+                for (action in machine.input(event)) {
+                    apply(action)
+                }
+            }
+        }
+    }
+
+    /** 连接生命周期入口（Service 装配后调用）。 */
+    fun connect() = feed(MachineEvent.Connect)
+
+    /** 主动断开（Disconnect 臂位 06-03 填充；feed 通道保持开放）。 */
+    fun disconnect() = feed(MachineEvent.Disconnect)
+
+    /** 终局销毁：Destroy 事件 + 串行队列关闭 + scope 取消（定时器一并收敛）。 */
+    fun destroy() {
+        feed(MachineEvent.Destroy)
+        eventQueue.close()
+        scope.cancel()
+    }
+
+    /** 事件入队（任意线程可调——OkHttp 回调线程/定时器协程/UI 线程）。 */
+    private fun feed(event: MachineEvent) {
+        eventQueue.trySend(event)
+    }
+
+    // ---- 动作分派（仅消费协程调用——串行化保证） ----
+
+    private fun apply(action: MachineAction) {
+        when (action) {
+            is MachineAction.CreateSocket -> openSocket()
+            is MachineAction.CloseSocket -> {
+                val (code, reason) = closeCodeOf(action.reason)
+                ws?.close(code, reason)
+            }
+            is MachineAction.SendPing -> ws?.send(PING) // 字节常量直发（Pitfall 1）
+            is MachineAction.SendSync -> {
+                // sync 帧允许运行时序列化（服务端 JSON.parse 键序无关；唯一字节
+                // 常量约束是 PING）。
+                val frame = SyncFrame(v = PROTOCOL_VERSION, type = "sync", since = action.since, limit = action.limit)
+                ws?.send(lenientJson.encodeToString(frame))
+            }
+            is MachineAction.Schedule -> {
+                // 替换语义：同种已武装先取消（机器 armTimer 的 cancel+schedule 对应物）；
+                // 幽灵定时器由机器武装集过滤（双保险，同 TS setTimeout 模式）。
+                timers.remove(action.timer)?.cancel()
+                val timer = action.timer
+                timers[timer] = scope.launch {
+                    delay(action.delayMs)
+                    feed(MachineEvent.Timer(timer))
+                }
+            }
+            is MachineAction.Cancel -> timers.remove(action.timer)?.cancel()
+            is MachineAction.EmitStatus -> events.onStatus(action.status)
+            is MachineAction.EmitMessage -> events.onMessage(action.message)
+            is MachineAction.EmitHistory -> events.onHistory(action.frame)
+            is MachineAction.EmitAnswered -> {
+                // 06-03 接通：answered 透传回调（ChannelEvents 扩展 onAnswered）——
+                // 词汇表动作已就位，D-17（dedup 之外原样透传）语义随帧型补全落地。
+            }
+            is MachineAction.EmitError -> events.onError(action.error)
+        }
+    }
+
+    private fun openSocket() {
+        val gen = generation.incrementAndGet()
+        // 陈旧 socket 防护：新连接尝试开始即弃旧句柄（迟到事件由代际号拦截）。
+        ws = null
+        val request = try {
+            Request.Builder().url(wsUrl).build()
+        } catch (e: IllegalArgumentException) {
+            // 畸形 serverUrl（唯一同步抛出源，确定性配置错误）→ WsFail fatal 族
+            // （报错 + 停止 + 不复活）。错误文案静态英文，不内嵌 URL（密钥在路径段）。
+            feed(MachineEvent.WsFail("failed to construct WebSocket for serverUrl"))
+            return
+        }
+        ws = client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (gen == generation.get()) feed(MachineEvent.WsOpen)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (gen == generation.get()) {
+                    feed(MachineEvent.Frame(parseServerFrame(text)))
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (gen == generation.get()) feed(MachineEvent.WsClose)
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // 握手失败/TLS/网络断全收口于此（05-01 实证：connect 失败映射
+                // WsClose 走退避，非 fatal）。onFailure 不发事件载荷（文案可能含
+                // URL——密钥在路径段，绝不外泄）。
+                if (gen == generation.get()) feed(MachineEvent.WsClose)
+            }
+        })
+    }
+
+    /**
+     * 回复出站直发占位（WEB-03 Pattern 7：reply 不进连接状态机词汇表——连接层
+     * 只管连接生命周期）。06-06 回复 UI 消费。
+     *
+     * @return false = not_connected（未建连 fail-fast——不排队不重试，用户重试
+     *   语义属 UI 业务层）；载荷恰一校验由服务端权威执行（域级拒绝经 WsErrorFrame
+     *   → onError 回调透传）。
+     */
+    fun sendReply(channelId: String, wid: String, selectedOption: String? = null, text: String? = null): Boolean {
+        // channelId 为 06-06 多频道路由参数占位（reply 帧本身无 channel 字段）。
+        val socket = ws ?: return false
+        val frame = ReplyFrame(
+            v = PROTOCOL_VERSION,
+            type = "reply",
+            wid = wid,
+            selectedOption = selectedOption,
+            text = text,
+        )
+        return socket.send(lenientJson.encodeToString(frame))
+    }
+}
+
+/** close code 映射（pushhub.ts:355-367 verbatim）；文案静态英文不含 URL/密钥。 */
+private fun closeCodeOf(reason: CloseReason): Pair<Int, String> = when (reason) {
+    CloseReason.Fatal -> 1002 to "protocol version mismatch"
+    CloseReason.Deadline -> 4000 to "heartbeat deadline"
+    CloseReason.Manual -> 1000 to "client disconnect"
+}

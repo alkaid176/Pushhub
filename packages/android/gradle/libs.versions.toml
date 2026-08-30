@@ -1,0 +1,68 @@
+# PushHub Android 版本 catalog（RESEARCH §Standard Stack 逐值实查，2026-08-30
+# repo1.maven.org / dl.google.com 目录与 POM 直查；标注 ASSUMED 的条目已在本会话
+# 复核：fragment 1.9.0 / test 三件 / robolectric 4.16.1 / mockwebserver3 全部 200）。
+# 数值变更即供应链事件（T-06-01-SC mitigate：catalog 逐版本锁定）。
+
+[versions]
+# --- 构建链 ---
+# AGP 9 起 Kotlin 编译由 built-in Kotlin 承担（org.jetbrains.kotlin.android 插件
+# 与新 DSL 不兼容，官方迁移指引要求移除）；AGP 9.3.2 携带 KGP 运行时依赖且
+# 最低要求 2.2.10——本 catalog 的 kotlin 版本服务于 serialization 编译器插件与
+# kotlin-test，取 2.2.10（2.2.x 语言线内的 AGP 基线版，CLAUDE.md 锁定 2.2.0 系列）。
+kotlin = "2.2.10"
+agp = "9.3.2"                    # dl.google.com 实查最新 stable（9.4 仅 rc）；需 Gradle 9.5.0 + JDK 17+
+# --- 核心依赖 ---
+okhttp = "5.5.0"                 # WS 客户端 + mockwebserver3 同源
+serializationJson = "1.9.0"      # 帧序列化（ignoreUnknownKeys/explicitNulls）
+coroutines = "1.11.0"            # adapter 定时器 + feed 串行队列
+# --- UI 栈（View 体系 + Material，D-83；本 plan 仅 catalog 备位，消费在 06-03+/06-06）---
+markwon = "4.6.2"                # Markdown→Spanned（休眠但稳定，无 html 插件即无 jsoup 面）
+material = "1.14.0"
+coreKtx = "1.19.0"
+appcompat = "1.8.0"
+viewpager2 = "1.1.0"
+recyclerview = "1.4.0"
+fragment = "1.9.0"               # A9 复核：1.9.0 stable（dl.google.com metadata）
+lifecycleService = "2.11.0"      # LifecycleService 基类（specialUse FGS）
+activityKtx = "1.13.0"           # registerForActivityResult（POST_NOTIFICATIONS）
+# --- 测试 ---
+junit = "4.13.2"
+androidxTestRunner = "1.7.0"     # instrumentation（真机 connected 测试，06-02+/spike）
+androidxTestExtJunit = "1.3.0"
+androidxTestRules = "1.7.0"
+robolectric = "4.16.1"           # 本地 Context 单测备位（Markwon 渲染测试，06-03+）
+
+[libraries]
+# --- 核心运行时 ---
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+# --- AndroidX 基座 ---
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-service", version.ref = "lifecycleService" }
+androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activityKtx" }
+# --- UI 栈（消费在后续 plan；catalog 备位）---
+androidx-fragment = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }
+androidx-viewpager2 = { group = "androidx.viewpager2", name = "viewpager2", version.ref = "viewpager2" }
+androidx-recyclerview = { group = "androidx.recyclerview", name = "recyclerview", version.ref = "recyclerview" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
+markwon-ext-tables = { group = "io.noties.markwon", name = "ext-tables", version.ref = "markwon" }
+markwon-ext-strikethrough = { group = "io.noties.markwon", name = "ext-strikethrough", version.ref = "markwon" }
+markwon-ext-tasklist = { group = "io.noties.markwon", name = "ext-tasklist", version.ref = "markwon" }
+# --- JVM 测试 ---
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+mockwebserver3 = { group = "com.squareup.okhttp3", name = "mockwebserver3", version.ref = "okhttp" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+# --- instrumentation 测试（真机；spike/06-02+ 消费）---
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
+androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTestRules" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+# kotlin-android 不再声明——AGP 9 built-in Kotlin 默认接管（官方迁移指引）
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

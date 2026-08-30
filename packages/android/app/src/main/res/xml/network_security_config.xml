@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- main 源集：release 缺省硬禁明文（Pitfall 7——生产入口仅 https://pushhub.dyun.org，
+     wss:// 全程 TLS；V10 通讯域标准）。debug 源集的同名文件覆盖此配置允许 cleartext
+     （本地 wrangler dev 真机联调用）。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
