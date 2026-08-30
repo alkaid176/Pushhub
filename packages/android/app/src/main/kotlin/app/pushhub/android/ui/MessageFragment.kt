@@ -39,10 +39,11 @@ import kotlinx.serialization.encodeToString
  * 复用本类（tab 切换销毁重建时经 companion 级每频道缓冲 snapshot() 全量初绘）。
  *
  * 渲染纪律：
- *  - 视图创建时取该频道缓冲 snapshot() 全量初绘（重建态由快照恢复）；
- *  - 订阅 ChannelHub.events 增量——实时帧插入（notifyItemInserted 语义经
- *    ListAdapter wid diff 自动计算）、applyAnswered 命中时原位刷新对应项
- *    （D-17 不新增条目）；
+ *  - 视图创建时取该频道缓冲 snapshot() 全量初绘（含 service 侧首拉/补拉
+ *    history——CR-03 后缓冲与 service 单实例共享；重建态由快照恢复）；
+ *  - 订阅 ChannelHub.events 增量——事件只触发重渲染（实时帧插入语义经
+ *    ListAdapter wid diff 自动计算、answered 命中时原位刷新对应项——D-17
+ *    不新增条目）；缓冲写入单写者 = service 侧 ChannelWiring；
  *  - 滚动策略：新消息到达且已处于底部时自动跟随；用户上滑阅读历史时不打断。
  *
  * 本 plan（Wave 3）：ChannelHub 运行时写入方 PushHubService 由 06-05 同波落地
@@ -99,7 +100,8 @@ class MessageFragment : Fragment() {
 
         bindReplyViews(view)
 
-        // 视图创建时缓冲 snapshot() 全量初绘（D-60：快照重建语义）
+        // 视图创建时缓冲 snapshot() 全量初绘（D-60：快照重建语义；CR-03 后含
+        // service 侧首拉/补拉 history——冷启动消息列表不再结构性为空）
         renderAll()
         observeHub()
     }
@@ -143,13 +145,16 @@ class MessageFragment : Fragment() {
     }
 
     private fun onNewMessage(frame: MessageFrame) {
-        buffer.push(frame)
+        // CR-03：缓冲写入归 service 侧 ChannelWiring（单写者纪律——实时帧/首拉/
+        // 补拉 history 全量进共享缓冲）；hub 事件在此只触发重渲染。
         renderAll(autoFollow = true)
     }
 
     private fun onAnswered(frame: AnsweredFrame) {
-        // 迟到 answered 容忍（消息可能不在缓冲窗口——applyAnswered false 即无动作）
-        if (buffer.applyAnswered(frame)) {
+        // 迟到 answered 容忍（消息可能不在缓冲窗口——快照无此 wid 即无动作）。
+        // CR-03：权威写缓冲归 service 侧 ChannelWiring.onAnswered（单写者纪律），
+        // 此处只读快照判定后重渲染。
+        if (buffer.snapshot().messages.any { it.wid == frame.wid }) {
             pendingReplies.remove(frame.wid)
             renderAll()
         }
@@ -337,8 +342,14 @@ class MessageFragment : Fragment() {
         internal const val FLASH_DURATION_MS = 1_500L
 
         /**
-         * 每频道缓冲存储（companion 级——Fragment 实例外存活）：06-07 ViewPager2
+         * 每频道缓冲存储（companion 级——Fragment 实体外存活）：06-07 ViewPager2
          * tab 切换销毁重建 Fragment 时，同频道缓冲连续积累，初绘经 snapshot() 恢复。
+         *
+         * CR-03：本注册表升级为 **service / UI 共享单实例**——service 侧
+         * ChannelWiring 经 [resetChannelBuffer] 装配写入端（实时帧 + 首拉/补拉
+         * history 全量进缓冲），UI 经 [bufferFor] 读快照；此前两侧各持一套 Buffer
+         * 互不相通，service 侧 snapshot() 无任何消费者，首拉/补拉消息结构性
+         * 不达 UI。
          */
         private val channelBuffers = mutableMapOf<String, Buffer>()
 
@@ -362,6 +373,18 @@ class MessageFragment : Fragment() {
 
         internal fun bufferFor(channelId: String): Buffer =
             channelBuffers.getOrPut(channelId) { Buffer() }
+
+        /**
+         * 服务装配入口（CR-03）：换新该频道缓冲并返回——service 侧 ChannelWiring
+         * 与 UI [bufferFor] 自此同实例（service 写 / UI 读）。运行时重建（key 变更 /
+         * server 变更全量重建）时旧缓冲随之丢弃，新连接首拉 history 回填
+         * （ChannelManager updateChannel「缓冲丢弃后回填」语义保留）。
+         */
+        internal fun resetChannelBuffer(channelId: String): Buffer {
+            val fresh = Buffer()
+            channelBuffers[channelId] = fresh
+            return fresh
+        }
 
         /** 测试隔离：清空缓冲存储与 outbox 挂载（测试间互不污染）。 */
         internal fun resetForTest() {

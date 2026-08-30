@@ -124,7 +124,14 @@ class PushHubService : LifecycleService() {
                         manager.configs().firstOrNull { it.id == channel.id }?.name
                             ?: channel.name
                     },
-                    buffer = Buffer(),
+                    // CR-03 修复：缓冲与 UI 单实例共享（MessageFragment companion 注册表）
+                    // ——service 写全量（实时帧 + 首拉/补拉 history），UI 初绘/重渲染
+                    // 读 snapshot()。此前 service 侧 Buffer() 的 snapshot() 全仓库无
+                    // 消费者，首拉/补拉消息结构性不达 UI（消息列表空/seq 永久缺口）。
+                    // 运行时重建（key 变更/server 变更全量重建）时 resetChannelBuffer
+                    // 换新实例——旧缓冲丢弃、新连接首拉回填（ChannelManager updateChannel
+                    // 「缓冲丢弃后回填」语义保留）。
+                    buffer = MessageFragment.resetChannelBuffer(channel.id),
                     notifier = RouterNotifier(router),
                     hub = hub,
                     spikeLog = spikeLog,

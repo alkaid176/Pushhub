@@ -18,7 +18,10 @@ import app.pushhub.android.protocol.ServerFrame
  *    正是为此）；找不到对应 wid 返回 false（迟到 answered 容忍，消息可能已被
  *    环形淘汰或属于其他会话前窗口）；幂等：同 wid 重复扇出重复覆写无害。
  *
- * 零平台依赖纯逻辑（ArrayDeque——机器串行化纪律下仅单线程访问，不设同步原语）。
+ * 零平台依赖纯逻辑（ArrayDeque）。CR-03 单实例共享（service 侧 ChannelWiring
+ * 写 / UI 主线程读快照）后跨线程访问——方法级 @Synchronized 串行化：写者仍是
+ * 单一（adapter 消费协程），锁只兜 UI 读与写的互斥与可见性；锁竞争面 = 每频道
+ * 每消息一次短临界区，无热点。
  */
 
 /**
@@ -44,6 +47,7 @@ class Buffer {
     private var evictedCount = 0L
 
     /** 入缓冲；容量满时淘汰最旧一条（插入序）并返回被淘汰项（未满返回 null）。 */
+    @Synchronized
     fun push(msg: ServerFrame.Message): ServerFrame.Message? {
         val evicted = if (deque.size >= BUFFER_CAP) deque.removeFirst() else null
         if (evicted != null) evictedCount += 1
@@ -53,13 +57,14 @@ class Buffer {
 
     /** 当前保留条数。 */
     val size: Int
-        get() = deque.size
+        @Synchronized get() = deque.size
 
     /** 是否为空。 */
     val isEmpty: Boolean
-        get() = deque.isEmpty()
+        @Synchronized get() = deque.isEmpty()
 
     /** 全量快照：消息按 seq 升序 + 淘汰计数 + 最旧保留 seq。 */
+    @Synchronized
     fun snapshot(): BufferSnapshot {
         val messages = deque.sortedBy { it.seq }
         return BufferSnapshot(
@@ -74,6 +79,7 @@ class Buffer {
      * 为准覆写；找不到返回 false（迟到 answered 容忍——消息可能已被环形淘汰）。
      * 幂等：同 wid 重复扇出重复覆写无害。
      */
+    @Synchronized
     fun applyAnswered(frame: ServerFrame.Answered): Boolean {
         for (i in deque.indices) {
             val m = deque[i]
@@ -91,5 +97,6 @@ class Buffer {
     }
 
     /** 当前缓冲内全部 seq（测试观测口——恰缺零重断言用）。 */
+    @Synchronized
     fun seqs(): List<Long> = deque.map { it.seq }
 }
