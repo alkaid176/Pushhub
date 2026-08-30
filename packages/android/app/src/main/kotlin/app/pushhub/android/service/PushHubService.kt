@@ -8,6 +8,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import app.pushhub.android.R
 import app.pushhub.android.adapter.ChannelEvents
+import app.pushhub.android.protocol.AnsweredFrame
 import app.pushhub.android.adapter.OkHttpChannelAdapter
 import app.pushhub.android.config.ConfigStore
 import app.pushhub.android.machine.ConnectionMachine
@@ -66,6 +67,10 @@ class PushHubService : LifecycleService() {
 
                     override fun onHistory(frame: HistoryFrame) {
                         // 首拉/补拉批次：只进缓冲不通知（D-61/D-63）；缓冲接线 06-03+。
+                    }
+
+                    override fun onAnswered(frame: AnsweredFrame) {
+                        // answered 原位更新通知（D-69）经 ChannelHub 扇出；接线 06-05+。
                     }
 
                     override fun onError(error: ErrorPayload) {
