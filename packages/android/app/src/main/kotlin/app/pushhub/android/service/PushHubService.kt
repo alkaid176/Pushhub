@@ -11,22 +11,26 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
 import app.pushhub.android.R
 import app.pushhub.android.adapter.ChannelEvents
-import app.pushhub.android.adapter.OkHttpChannelAdapter
+import app.pushhub.android.adapter.ChannelManager
+import app.pushhub.android.adapter.ChannelRuntimeFactory
+import app.pushhub.android.adapter.OkHttpChannelRuntimeFactory
 import app.pushhub.android.config.ConfigStore
 import app.pushhub.android.hub.ChannelHub
 import app.pushhub.android.machine.Buffer
-import app.pushhub.android.machine.ConnectionMachine
 import app.pushhub.android.machine.ErrorPayload
 import app.pushhub.android.machine.Status
 import app.pushhub.android.protocol.AnsweredFrame
 import app.pushhub.android.protocol.HistoryFrame
 import app.pushhub.android.protocol.MessageFrame
-import kotlinx.coroutines.flow.MutableStateFlow
+import app.pushhub.android.ui.MessageFragment
+import kotlinx.coroutines.launch
 
 /**
- * PushHub specialUse 前台服务（06-01 骨架 → 06-05 通知接线，AND-01/AND-02）。
+ * PushHub specialUse 前台服务（06-01 骨架 → 06-05 通知接线 → 06-07 多频道泛化，
+ * AND-01/AND-02/D-79）。
  *
  * 架构位（RESEARCH 架构图 / D-59/D-60）：连接归 FGS 进程——UI（Activity）只是
  * 进程内共享状态的观察者，转屏/切走/锁屏不断连接。onCreate 首行（super 之后
@@ -36,38 +40,35 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * startForegroundService——Android 12+ 后台启动 FGS 被禁止；**无任何开机自启
  * 接收器与作业调度兜底**（D-86 裁决）。
  *
- * 06-05 接线（本文件与 [ChannelWiring] 分工——Android 装配面在本类，两流分离
- * 纯逻辑在 ChannelWiring，JVM 双计数器测试锁定）：
- *  - **ChannelHub 写入方**（06-04 契约面的装配点）：Android 双路权限检查函数
- *    注入 + install 单例；onStatus/onMessage/onAnswered 发布进对应
- *    StateFlow/SharedFlow（Service 写、06-06 UI 读）；
- *  - **通知接线**：onMessage → 权限前置检查 + [NotificationRouter.show]；
- *    onAnswered → cancel(tag=wid)（D-69）；onHistory 零通知（D-61/D-63）；
- *  - **FGS 常驻通知升级**：内容为连接状态汇总文本（单频道「在线/重连中」；
- *    多频道聚合 06-07 接 manager.statuses() 后升级）。
- *
- * tracer 直装配：单频道（配置首个）→ OkHttpChannelAdapter；ChannelManager
- * 泛化（≤8 频道，D-79）归 06-07。
+ * 06-07 泛化（D-79 多频道，替换 06-05 单频道直装配）：
+ *  - **ChannelManager 装配**：读 ConfigStore 后经 [ChannelManager.syncFromConfig]
+ *    装配全部配置频道（每频道独立运行时——一频道断连不影响其他）；
+ *  - **配置热更新**：onStartCommand 处理 [ACTION_SYNC_CONFIG]（频道管理页变更后
+ *    经 ServiceRestart 投递——**替换 06-04 的重启过渡语义**：不再 stop+start，
+ *    syncFromConfig 增量 diff 四分支收敛，未变频道连接保持）；
+ *  - **FGS 常驻通知汇总**：statuses() 聚合文本（「在线 N / 重连中 M」——D-81
+ *    对齐桌面 tooltip 心智；状态变迁时更新）；
+ *  - **探活广播转发**：collect [ChannelHub.appVisibility] → manager.setVisibility
+ *    （D-27 第三端——MainActivity onResume/onStop 喂入）;
+ *  - **回复出站口路由**：collect [ChannelHub.currentChannelId] → 挂载当前频道
+ *    adapter 到 MessageFragment.replyChannelAdapter（06-06 契约的 06-07 接线）。
  */
 class PushHubService : LifecycleService() {
 
-    private var adapter: OkHttpChannelAdapter? = null
     private lateinit var spikeLog: SpikeLog
     private lateinit var router: NotificationRouter
     private lateinit var hub: ChannelHub
+    private lateinit var manager: ChannelManager
 
     override fun onCreate() {
         super.onCreate()
         // A3 五秒规则：super.onCreate 后立即 startForeground——先于任何连接装配。
         ensureChannel()
-        startForeground(FGS_NOTIF_ID, buildStatusNotification(statusSummaryText(Status.Connecting)))
+        startForeground(FGS_NOTIF_ID, buildStatusNotification(initialSummaryText))
         spikeLog = SpikeLog(filesDir.resolve("spike-log"))
         router = NotificationRouter(this)
 
         // ---- ChannelHub 装配（06-04 Task 4 契约面的写入方接线，Pitfall 4 双路）----
-        // 计算语义（版本分流）在 ChannelHub 内；Android 真实检查函数在此注入：
-        //  - API 33+：checkSelfPermission(POST_NOTIFICATIONS)；
-        //  - API 33-：areNotificationsEnabled() 系统总开关。
         hub = ChannelHub(
             runtimePermissionGranted = {
                 ContextCompat.checkSelfPermission(
@@ -83,45 +84,68 @@ class PushHubService : LifecycleService() {
         // 无广播可订阅，决策点重算是权限时效的最稳口径）。
         hub.refreshNotificationsBlocked()
 
-        val config = ConfigStore(filesDir).load()
-        val firstChannel = config.channels.firstOrNull()
-        if (config.server.isNotBlank() && firstChannel != null) {
-            // 通道组预建（D-87：同 ID 重建即改名更新 label——幂等）。
-            router.ensureChannelGroup(firstChannel.name, firstChannel.id)
-            val machine = ConnectionMachine()
-            adapter = OkHttpChannelAdapter(
-                machine = machine,
-                serverUrl = config.server,
-                channelKey = firstChannel.key,
-                events = ChannelWiring(
-                    channelId = firstChannel.id,
-                    channelName = firstChannel.name,
+        // ---- ChannelManager 多频道装配（06-07，D-79——每频道独立运行时）----
+        val configStore = ConfigStore(filesDir)
+        manager = ChannelManager(factory = productionFactory(configStore))
+        manager.syncFromConfig(configStore.load())
+        updateFgsSummary()
+
+        // 探活广播转发（D-27）：UI 可见性请求 → 逐频道 Visibility 事件
+        // （StateFlow 当前值语义——service 装配前 UI 已 resume 的请求不丢）。
+        lifecycleScope.launch {
+            hub.appVisibility.collect { visible -> manager.setVisibility(visible) }
+        }
+
+        // 回复出站口路由：当前显示频道变化 → 重挂 MessageFragment.replyChannelAdapter
+        // （06-06 声明的挂载契约在多频道下的落位——回复总是发往当前频道的连接）。
+        lifecycleScope.launch {
+            hub.currentChannelId.collect { id ->
+                MessageFragment.replyChannelAdapter = id?.let { manager.replyAdapterOf(it) }
+            }
+        }
+    }
+
+    /**
+     * 生产频道运行时工厂：每频道组装 OkHttpChannelRuntime（独立机器 + adapter +
+     * 状态单元）+ [ChannelWiring]（通知/Hub/SpikeLog 接线）。channelName 经
+     * manager configs 动态查（频道改名轻更新后通知标题/通道 label 即时跟新名）。
+     */
+    private fun productionFactory(configStore: ConfigStore): ChannelRuntimeFactory =
+        OkHttpChannelRuntimeFactory(
+            serverUrl = { configStore.load().server },
+            eventsFor = { channel ->
+                ChannelWiring(
+                    channelId = channel.id,
+                    channelName = {
+                        // 动态查名：改名轻更新零重建，但通知标题/通道 label 必须读新名
+                        manager.configs().firstOrNull { it.id == channel.id }?.name
+                            ?: channel.name
+                    },
                     buffer = Buffer(),
                     notifier = RouterNotifier(router),
                     hub = hub,
                     spikeLog = spikeLog,
                     refreshBlocked = hub::refreshNotificationsBlocked,
-                    onStatusChanged = { status ->
-                        // 06-01 占位订阅口（MainActivity 仍消费；06-06 替换为
-                        // ChannelHub.channelStatus——跨 plan 文件所有权纪律）。
-                        statusFlow.value = status
-                        updateFgsSummary(status)
-                    },
-                ),
-            ).also { it.connect() }
-        }
-    }
+                    onStatusChanged = { updateFgsSummary() },
+                )
+            },
+        )
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        if (intent?.action == ACTION_SYNC_CONFIG) {
+            // 配置热更新（06-07 替换 06-04 重启过渡语义）：增量 diff——新增建连、
+            // 删除断连、key 变更重建、仅改名轻更新；未变频道连接保持。
+            manager.syncFromConfig(ConfigStore(filesDir).load())
+            updateFgsSummary()
+        }
         // START_NOT_STICKY：进程被杀后不自动重启服务（D-86——重启只经用户显式启动）。
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        // 经 Destroy 事件收连接（终局销毁——定时器/串行队列一并收敛）。
-        adapter?.destroy()
-        adapter = null
+        // 逐频道 Destroy + 有界收敛（manager.rs destroy_all 同构）。
+        manager.destroyAll()
         super.onDestroy()
     }
 
@@ -138,24 +162,13 @@ class PushHubService : LifecycleService() {
         )
     }
 
-    /** FGS 常驻通知内容升级：连接状态汇总文本（同 ID notify 更新，前台位不降级）。 */
-    private fun updateFgsSummary(status: Status) {
+    /** FGS 常驻通知内容升级：manager.statuses() 聚合文本（状态变迁时更新）。 */
+    private fun updateFgsSummary() {
+        if (!this::manager.isInitialized) return
         val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(FGS_NOTIF_ID, buildStatusNotification(statusSummaryText(status)))
+        nm.notify(FGS_NOTIF_ID, buildStatusNotification(fgsSummaryText(manager.statuses().map { it.second })))
     }
 
-    private fun statusSummaryText(status: Status): String = when (status) {
-        Status.Online -> "在线"
-        Status.Reconnecting -> "重连中"
-        Status.Connecting -> "连接中"
-        Status.Offline -> "离线"
-    }
-
-    /**
-     * FGS 常驻通知（裁量区建议形态）：IMPORTANCE_LOW 静默低调、ongoing 不可清除
-     * （prohibition：不隐藏后台常驻连接的存在）；内容为状态汇总文本（对齐桌面
-     * tooltip 心智，D-81 同源）。
-     */
     private fun buildStatusNotification(summary: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID_FGS)
             .setSmallIcon(R.drawable.ic_stat_pushhub)
@@ -171,11 +184,40 @@ class PushHubService : LifecycleService() {
         const val CHANNEL_ID_FGS = "ph_fgs"
         const val FGS_NOTIF_ID = 1
 
-        /**
-         * 进程内共享状态（06-01 tracer 占位；06-06 起由 ChannelHub.channelStatus
-         * 取代——过渡期双写保持占位 UI 可用）。
-         */
-        val statusFlow = MutableStateFlow(Status.Offline)
+        /** 配置变更 action（频道管理页/向导保存后投递——syncFromConfig 热更新入口）。 */
+        const val ACTION_SYNC_CONFIG = "app.pushhub.android.SYNC_CONFIG"
+
+        /** 汇总初值（manager 装配前的占位——装配后立即被 updateFgsSummary 覆盖）。 */
+        private const val initialSummaryText = "连接中"
+    }
+}
+
+/**
+ * FGS 汇总文本（纯函数——D-81 对齐桌面 tooltip 心智）：
+ *  - 单频道：该频道状态原文（在线/重连中/连接中/离线——06-05 语义保留）；
+ *  - 多频道：「在线 N / 重连中 M」聚合——仅列出非零项（全在线即「在线 N」）；
+ *    connecting 归入连接中、offline 归入离线，缺项不显示（**如实反映机器状态**
+ *    ——AND-04 prohibition：断连未恢复期间不得显示在线）。
+ */
+internal fun fgsSummaryText(statuses: List<Status>): String {
+    if (statuses.isEmpty()) return "未配置频道"
+    if (statuses.size == 1) {
+        return when (statuses.single()) {
+            Status.Online -> "在线"
+            Status.Reconnecting -> "重连中"
+            Status.Connecting -> "连接中"
+            Status.Offline -> "离线"
+        }
+    }
+    val online = statuses.count { it == Status.Online }
+    val reconnecting = statuses.count { it == Status.Reconnecting }
+    val connecting = statuses.count { it == Status.Connecting }
+    val offline = statuses.count { it == Status.Offline }
+    return buildString {
+        append("在线 $online")
+        if (reconnecting > 0) append(" / 重连中 $reconnecting")
+        if (connecting > 0) append(" / 连接中 $connecting")
+        if (offline > 0) append(" / 离线 $offline")
     }
 }
 
@@ -218,17 +260,22 @@ private class RouterNotifier(private val router: NotificationRouter) : Notifier 
  *
  * 两流分离不变量（D-61/D-63，Pitfall 9——机器动作分型天然分流的消费侧落地）：
  *  - onMessage（EmitMessage 实时帧）→ 缓冲 + SpikeLog + ChannelHub 事件 +
- *    **唯一通知路径**（前置权限检查）；
+ *    **唯一通知路径**（前置权限检查）+ 未读计数（非当前显示频道 +1——D-81
+ *    未读=新到实时帧，当前频道实时可见不计）；
  *  - onHistory（EmitHistory 首拉/补拉批次）→ 仅缓冲 + SpikeLog，**结构性零
- *    notifier 调用**（本回调体内无 show——源码结构断言锁定）；
+ *    notifier 调用、零未读计数**（本回调体内无 show/bump——源码结构断言锁定；
+ *    补拉批次不角标爆炸，Pitfall 9）；
  *  - onAnswered（EmitAnswered）→ 缓冲原位更新 + ChannelHub 事件 + D-69 取消。
  *
  * 权限被拒（Pitfall 4）：跳过 notify 但连接侧副作用照常（缓冲/日志/Hub 事件）
  * ——通知静默丢弃不反噬消息链路，状态经 hub.notificationsBlocked 暴露给 UI。
+ *
+ * @param channelName 频道名 provider（动态查——06-07 改名轻更新后通知标题/
+ *   通道 label 读新名；静态值会冻结在装配时点）。
  */
 class ChannelWiring(
     private val channelId: String,
-    private val channelName: String,
+    private val channelName: () -> String,
     private val buffer: Buffer,
     private val notifier: Notifier,
     private val hub: ChannelHub,
@@ -248,13 +295,15 @@ class ChannelWiring(
         buffer.push(message)
         spikeLog.messageArrived(channelId, message)
         hub.emitMessage(channelId, message)
+        // 未读计数（D-81）：当前显示频道实时可见不计；切走频道 +1。
+        if (hub.currentChannelId.value != channelId) hub.bumpUnread(channelId)
         // 通知前置检查：决策点重算权限状态（权限变化无广播，重算即最新）；
         // 被拒则跳过 notify——状态已在 hub 暴露（Pitfall 4：静默丢弃但连接照常）。
         refreshBlocked()
         if (hub.notificationsBlocked.value) return
         notifier.show(
             channelId = channelId,
-            channelName = channelName,
+            channelName = channelName(),
             wid = message.wid,
             title = message.title,
             text = message.text,
@@ -264,7 +313,8 @@ class ChannelWiring(
     }
 
     override fun onHistory(frame: HistoryFrame) {
-        // 两流分离（D-61/D-63）：首拉/补拉批次只进缓冲与日志——绝不触发通知。
+        // 两流分离（D-61/D-63）：首拉/补拉批次只进缓冲与日志——绝不触发通知、
+        // 绝不计未读（Pitfall 9：断线恢复补拉批次不角标爆炸）。
         for (m in frame.messages) buffer.push(m)
         spikeLog.historyBatch(channelId, frame.messages.size)
     }

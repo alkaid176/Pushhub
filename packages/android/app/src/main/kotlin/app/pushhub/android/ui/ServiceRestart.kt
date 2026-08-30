@@ -5,16 +5,20 @@ import android.content.Intent
 import app.pushhub.android.service.PushHubService
 
 /**
- * 配置变更后重启 FGS 使新配置生效（06-04 过渡语义——06-07 ChannelManager 落地
- * 热更新后替换为增量同步，见计划 Task 3 注释要求）。
+ * 配置变更后通知 service 热更新（06-07 起替换 06-04 的重启过渡语义——
+ * ChannelManager.syncFromConfig 增量 diff：新增建连/删除断连/key 变更重建/
+ * 仅改名轻更新，**未变频道连接保持**，不再 stop+start 全量重启）。
  *
- * tracer 版 PushHubService 只在 onCreate 装配连接，运行中重投 onStartCommand
- * 不重读配置——故变更后必须 stop + start（stopService 对未运行服务是 no-op，
- * 首启保存路径同样安全）。调用方必须在前台（Pitfall 3：Android 12+ 后台
- * 禁启 FGS——本函数只从向导/频道管理 Activity 调用）。
+ * 函数名保留 restartPushHubService（调用方 ChannelManageActivity/WizardActivity
+ * 不变——06-07 文件边界内的最小侵入；语义见本注释）。
+ *
+ * 调用方必须在前台（Pitfall 3：Android 12+ 后台禁启 FGS——本函数只从
+ * 向导/频道管理 Activity 调用）。服务已运行时这只是向 onStartCommand 投递
+ * [PushHubService.ACTION_SYNC_CONFIG]；未运行时（向导首启保存路径）
+ * onCreate 装配后 onStartCommand 再 sync 一次（幂等零动作）。
  */
 internal fun restartPushHubService(context: Context) {
     val intent = Intent(context, PushHubService::class.java)
-    context.stopService(intent)
+        .setAction(PushHubService.ACTION_SYNC_CONFIG)
     context.startForegroundService(intent)
 }

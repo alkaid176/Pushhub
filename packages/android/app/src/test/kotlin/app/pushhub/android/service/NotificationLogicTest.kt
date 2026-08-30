@@ -235,7 +235,7 @@ class NotificationLogicTest {
         val notifier = FakeNotifier()
         val wiring = ChannelWiring(
             channelId = "ch1",
-            channelName = "alerts",
+            channelName = { "alerts" },
             buffer = Buffer(),
             notifier = notifier,
             hub = hub,
@@ -291,7 +291,7 @@ class NotificationLogicTest {
         val hub = ChannelHub({ true }, { true }, { 34 })
         val wiring = ChannelWiring(
             channelId = "ch1",
-            channelName = "alerts",
+            channelName = { "alerts" },
             buffer = Buffer(),
             notifier = FakeNotifier(),
             hub = hub,
@@ -312,7 +312,7 @@ class NotificationLogicTest {
         val notifier = FakeNotifier()
         val wiring = ChannelWiring(
             channelId = "ch1",
-            channelName = "alerts",
+            channelName = { "alerts" },
             buffer = buffer,
             notifier = notifier,
             hub = hub,
