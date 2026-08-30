@@ -34,3 +34,9 @@ packages/desktop/test-results/
 packages/desktop/playwright-report/
 # tauri-build 生成产物（gen/schemas）
 packages/desktop/src-tauri/gen/
+
+# Android（packages/android 独立 Gradle 工程）
+packages/android/local.properties
+packages/android/.gradle/
+packages/android/build/
+packages/android/app/build/
