@@ -156,6 +156,10 @@ class PushHubService : LifecycleService() {
     override fun onDestroy() {
         // 逐频道 Destroy + 有界收敛（manager.rs destroy_all 同构）。
         manager.destroyAll()
+        // WR-03：companion 静态回复句柄同步清空——不清空则引用继续持有已销毁
+        // adapter（scope 已取消、socket 已断）：阻止 runtime 对象回收，且 UI 后续
+        // sendReply 走死句柄表现为「未连接」而非真实的「服务已停止」语义。
+        MessageFragment.replyChannelAdapter = null
         super.onDestroy()
     }
 
