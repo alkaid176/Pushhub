@@ -152,4 +152,21 @@ class ChannelHubUnreadTest {
         wiring.onStatus(Status.Online)
         assertTrue(hub.unreadCounts.value.isEmpty())
     }
+
+    /** 重连倒计时：Schedule(Reconnect) 回调写 deadline；onStatus 离开 Reconnecting 清除（D-81 状态条数据源同源不漂移）。 */
+    @Test
+    fun `reconnect deadline set on schedule and cleared on status exit`() {
+        val hub = hub(current = "ch1")
+        val wiring = wiring(hub, CountingNotifier(), channelId = "ch2")
+        wiring.onStatus(Status.Reconnecting)
+        hub.setReconnectDeadline("ch2", 30_000)
+        val deadline = hub.reconnectDeadlines.value["ch2"]
+        org.junit.Assert.assertNotNull(deadline)
+        assertTrue(
+            "deadline ≈ now + delayMs",
+            deadline!! > System.currentTimeMillis() + 25_000,
+        )
+        wiring.onStatus(Status.Online)
+        assertTrue("离开 Reconnecting 即清除", hub.reconnectDeadlines.value.isEmpty())
+    }
 }

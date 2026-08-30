@@ -164,6 +164,14 @@ class OkHttpChannelAdapter(
     }
 
     /**
+     * 动作观察钩子（06-07 增补）：消费协程在 apply 后回调（仅消费协程线程调用，
+     * 钩子自身须线程安全）。生产消费面 = OkHttpChannelRuntime 转发
+     * Schedule(Reconnect) 的剩余毫秒（重连倒计时发布——D-81 状态条数据源）；
+     * null = 无观察（缺省零开销）。
+     */
+    internal var onActionHook: ((MachineAction) -> Unit)? = null
+
+    /**
      * 事件注入口（JVM 测试专用——internal 同 module 可见）：模拟定时器到期/
      * WS 回调到达，直接向 feed 通道压入事件（AdapterFailover 死线路径与
      * AdapterConcurrency 并发防线测试消费；生产代码不得调用）。
@@ -203,6 +211,7 @@ class OkHttpChannelAdapter(
             is MachineAction.EmitAnswered -> events.onAnswered(action.frame)
             is MachineAction.EmitError -> events.onError(action.error)
         }
+        onActionHook?.invoke(action)
     }
 
     private fun openSocket() {

@@ -113,6 +113,9 @@ class PushHubService : LifecycleService() {
     private fun productionFactory(configStore: ConfigStore): ChannelRuntimeFactory =
         OkHttpChannelRuntimeFactory(
             serverUrl = { configStore.load().server },
+            onReconnectScheduled = { channelId, delayMs ->
+                hub.setReconnectDeadline(channelId, delayMs)
+            },
             eventsFor = { channel ->
                 ChannelWiring(
                     channelId = channel.id,
@@ -286,6 +289,9 @@ class ChannelWiring(
 
     override fun onStatus(status: Status) {
         hub.setChannelStatus(channelId, status)
+        // 重连倒计时同源清除：离开 Reconnecting 态即失效（Online/Connecting/Offline
+        // 均无倒计时语义——状态与倒计时经同一 EmitStatus 源，不漂移）。
+        if (status != Status.Reconnecting) hub.clearReconnectDeadline(channelId)
         spikeLog.status(channelId, status)
         onStatusChanged(status)
     }

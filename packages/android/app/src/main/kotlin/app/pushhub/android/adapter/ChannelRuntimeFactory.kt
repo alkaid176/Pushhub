@@ -2,7 +2,9 @@ package app.pushhub.android.adapter
 
 import app.pushhub.android.config.ChannelConfig
 import app.pushhub.android.machine.ConnectionMachine
+import app.pushhub.android.machine.MachineAction
 import app.pushhub.android.machine.Status
+import app.pushhub.android.machine.TimerKind
 
 /**
  * 单频道运行时契约（06-07 Task 1，D-79）——ChannelManager 的频道装配单元，
@@ -64,13 +66,20 @@ interface ChannelRuntimeFactory {
  * manager.statuses() 与 UI 状态条/FGS 汇总同源（EmitStatus 唯一数据源，
  * 状态诚实纪律 AND-04 prohibition）。
  *
+ * 重连倒计时发布（D-81 状态条「重连中 + 倒计时」数据源——06-07 接线）：
+ * adapter 的 [OkHttpChannelAdapter.onActionHook] 转发 Schedule(Reconnect) 的
+ * delayMs → [onReconnectScheduled]（service 侧写 hub deadline）；离开
+ * Reconnecting 态由 ChannelWiring.onStatus 清除（状态权威源一致）。
+ *
  * @param events 宿主事件接线（service 侧 ChannelWiring——通知两流分离/Hub 写入
  *   均在其中；本类只装饰 onStatus，其余按原样转发）。
  */
 class OkHttpChannelRuntime(
+    private val channelId: String,
     channelKey: String,
     serverUrl: String,
     events: ChannelEvents,
+    private val onReconnectScheduled: (channelId: String, delayMs: Long) -> Unit = { _, _ -> },
 ) : ChannelRuntime {
 
     @Volatile
@@ -89,6 +98,14 @@ class OkHttpChannelRuntime(
         channelKey = channelKey,
         events = wrappedEvents,
     )
+
+    init {
+        adapter.onActionHook = { action ->
+            if (action is MachineAction.Schedule && action.timer == TimerKind.Reconnect) {
+                onReconnectScheduled(channelId, action.delayMs)
+            }
+        }
+    }
 
     override fun start() = adapter.connect()
 
@@ -119,17 +136,21 @@ class OkHttpChannelRuntime(
 /**
  * 生产工厂：serverUrl 在 create 时读取（配置热更新路径 server 变更 →
  * ChannelManager.syncFromConfig 全量重建，新 runtime 拿新基址）；
- * eventsFor 由 service 侧提供（ChannelWiring 组装——通知/Hub/SpikeLog 依赖
- * 闭包捕获，adapter 包不依赖 service 包）。
+ * eventsFor/onReconnectScheduled 由 service 侧提供（ChannelWiring 组装与
+ * hub deadline 写入——通知/Hub/SpikeLog 依赖闭包捕获，adapter 包不依赖
+ * service/hub 包）。
  */
 class OkHttpChannelRuntimeFactory(
     private val serverUrl: () -> String,
     private val eventsFor: (ChannelConfig) -> ChannelEvents,
+    private val onReconnectScheduled: (channelId: String, delayMs: Long) -> Unit = { _, _ -> },
 ) : ChannelRuntimeFactory {
     override fun create(channel: ChannelConfig): ChannelRuntime =
         OkHttpChannelRuntime(
+            channelId = channel.id,
             channelKey = channel.key,
             serverUrl = serverUrl(),
             events = eventsFor(channel),
+            onReconnectScheduled = onReconnectScheduled,
         )
 }

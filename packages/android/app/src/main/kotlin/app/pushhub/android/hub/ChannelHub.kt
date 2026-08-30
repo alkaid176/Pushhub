@@ -102,6 +102,17 @@ class ChannelHub(
 
     private val _appVisibility = MutableStateFlow(false)
 
+    /**
+     * 重连倒计时截止时间表（06-07，D-81 状态条「重连中 + 倒计时」数据源）：
+     * channelId → epoch 毫秒截止（service 侧 OkHttpChannelRuntime 经
+     * Schedule(Reconnect) 动作回调写入 = now + delayMs；ChannelWiring.onStatus
+     * 离开 Reconnecting 态时清除——状态与倒计时同源不漂移）。UI 差值渲染剩余秒。
+     */
+    val reconnectDeadlines: StateFlow<Map<String, Long>>
+        get() = _reconnectDeadlines.asStateFlow()
+
+    private val _reconnectDeadlines = MutableStateFlow<Map<String, Long>>(emptyMap())
+
     // ---- Service 写入口（06-05 接线） ----
 
     /** 重算通知阻断状态（Service 在权限变化 onResume 等时机调用）。 */
@@ -144,6 +155,21 @@ class ChannelHub(
     /** 应用可见性请求（MainActivity onResume/onStop 写入——service 转发探活广播）。 */
     fun requestVisibility(visible: Boolean) {
         _appVisibility.value = visible
+    }
+
+    /**
+     * 重连倒计时写入（service 侧 Schedule(Reconnect) 动作回调）：截止 = now + delayMs
+     * （同频道重复武装为覆盖语义——forceReconnect 换新退避即新截止）。
+     */
+    fun setReconnectDeadline(channelId: String, delayMs: Long) {
+        _reconnectDeadlines.update {
+            it + (channelId to (System.currentTimeMillis() + delayMs))
+        }
+    }
+
+    /** 清除频道重连倒计时（离开 Reconnecting 态——ChannelWiring.onStatus 调用）。 */
+    fun clearReconnectDeadline(channelId: String) {
+        _reconnectDeadlines.update { it - channelId }
     }
 
     private fun computeNotificationsBlocked(): Boolean =

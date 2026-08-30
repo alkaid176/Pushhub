@@ -290,12 +290,26 @@ class MainActivity : AppCompatActivity() {
                 hub.channelStatus.collect { refreshStatusText() }
             }
             launch {
+                hub.reconnectDeadlines.collect { refreshStatusText() }
+            }
+            launch {
+                // 倒计时秒级刷新：仅当前频道处于 Reconnecting 时 deadline 有值，
+                // 空表时循环零渲染开销（500ms 心跳粒度对齐秒级显示）。
+                while (true) {
+                    delay(STATUS_TICKER_INTERVAL_MS)
+                    refreshStatusText()
+                }
+            }
+            launch {
                 hub.unreadCounts.collect { counts -> renderBadges(counts) }
             }
         }
     }
 
-    /** 状态条刷新（当前显示频道的 Status——tab 切换/状态变迁双路径触发）。 */
+    /**
+     * 状态条刷新（当前显示频道的 Status + 重连倒计时——tab 切换/状态变迁/
+     * deadline 写入/秒级 ticker 四路径触发；D-81「重连中 + 倒计时」）。
+     */
     private fun refreshStatusText() {
         val id = currentChannelId
         if (id == null) {
@@ -303,7 +317,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val hub = installedHub() ?: return
-        statusText.text = statusBarText(hub.channelStatus.value[id])
+        val status = hub.channelStatus.value[id]
+        val remaining = hub.reconnectDeadlines.value[id]
+            ?.takeIf { status == Status.Reconnecting }
+            ?.let { deadline -> (deadline - System.currentTimeMillis()).coerceAtLeast(0) }
+        statusText.text = statusBarText(status, remaining)
     }
 
     /** 未读角标渲染（D-81：BadgeDrawable per 频道 tab；零计数移除）。 */
@@ -377,6 +395,9 @@ class MainActivity : AppCompatActivity() {
         const val DEEPLINK_WAIT_ROUNDS = 20
 
         const val DEEPLINK_WAIT_INTERVAL_MS = 50L
+
+        /** 状态条倒计时刷新粒度（500ms——秒级显示的半拍采样，deadline 到 0 即显示 0s）。 */
+        const val STATUS_TICKER_INTERVAL_MS = 500L
     }
 }
 
