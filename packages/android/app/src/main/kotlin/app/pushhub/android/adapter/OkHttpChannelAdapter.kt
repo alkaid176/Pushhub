@@ -243,14 +243,24 @@ class OkHttpChannelAdapter(
     }
 
     /**
-     * 回复出站直发占位（WEB-03 Pattern 7：reply 不进连接状态机词汇表——连接层
+     * 回复出站直发（WEB-03 Pattern 7：reply 不进连接状态机词汇表——连接层
      * 只管连接生命周期）。06-06 回复 UI 消费。
      *
      * @return false = not_connected（未建连 fail-fast——不排队不重试，用户重试
      *   语义属 UI 业务层）；载荷恰一校验由服务端权威执行（域级拒绝经 WsErrorFrame
      *   → onError 回调透传）。
+     * @param by 自报展示名（D-72——06-06 UI 层从 ConfigStore.displayName 自动
+     *   携带；null/空白缺省不序列化即匿名回复，上限 BY_MAX 由 UI 层裁剪后传入）。
+     *   06-06 Task 3 增补：计划要求 sendReply 内部自动携带 displayName——原签名
+     *   无该参数（Rule 3 偏差修复，默认值保零调用方兼容）。
      */
-    fun sendReply(channelId: String, wid: String, selectedOption: String? = null, text: String? = null): Boolean {
+    fun sendReply(
+        channelId: String,
+        wid: String,
+        selectedOption: String? = null,
+        text: String? = null,
+        by: String? = null,
+    ): Boolean {
         // channelId 为 06-06 多频道路由参数占位（reply 帧本身无 channel 字段）。
         val socket = ws ?: return false
         val frame = ReplyFrame(
@@ -259,6 +269,7 @@ class OkHttpChannelAdapter(
             wid = wid,
             selectedOption = selectedOption,
             text = text,
+            by = by?.takeIf { it.isNotBlank() },
         )
         return socket.send(lenientJson.encodeToString(frame))
     }

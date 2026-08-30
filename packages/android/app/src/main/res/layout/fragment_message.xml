@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MessageFragment 布局（06-06 Task 2，AND-03）——单频道消息界面：
+     RecyclerView 消息列表（空态文案覆盖层）+ 底部回复区容器（Task 3 填充）。
+     不做 SwipeRefresh（计划裁决：避免误触发）；滚动策略在 Fragment 代码层
+     （新消息且已在底部时跟随，上滑阅读历史不打断）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/message_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp" />
+
+        <TextView
+            android:id="@+id/empty_state"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="暂无消息——等待 Webhook 推送"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- 底部回复区（06-06 Task 3，RPL-05）：绑定当前选中消息——回复目标行 +
+         快捷选项横排（选中消息 options，最多 4）+ 自定义输入 + 发送。
+         已 answered 选中消息：全区冻结（禁用 + 冻结提示，防重复处置——服务端
+         already_replied 拒绝之外的客户端第二道防线）。无选中时整体隐藏。 -->
+    <LinearLayout
+        android:id="@+id/reply_area"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/reply_target"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceLabelMedium" />
+
+        <LinearLayout
+            android:id="@+id/reply_options"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="bottom"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/reply_input"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="top"
+                android:hint="自定义回复（Markdown）…"
+                android:inputType="textMultiLine|textCapSentences"
+                android:maxLines="4"
+                android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+            <Button
+                android:id="@+id/btn_send"
+                style="?attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:enabled="false"
+                android:text="发送" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/reply_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="该消息已处置——回复冻结"
+            android:textAppearance="?attr/textAppearanceLabelSmall"
+            android:visibility="gone" />
+    </LinearLayout>
+</LinearLayout>

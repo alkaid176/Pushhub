@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 消息卡条目（06-06 Task 2，AND-03/RPL-05）——两种 viewType（未答/已答）共用：
+     - 未答（TYPE_NORMAL）：标题行 + Markwon 渲染正文 + seq/时间戳辅助行 +
+       快捷选项按钮横排（动态填充，最多 4）；
+     - 已答（TYPE_ANSWERED）：同上但快捷按钮区冻结移除、answered 展示区
+       （前缀行「已由 X 回复：」+ Markwon 渲染的回复内容）出现。
+     本地乐观置灰（pendingReply）与选中态/定位高亮由 Adapter 代码层施加。 -->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/msg_card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginVertical="4dp"
+    app:cardCornerRadius="10dp"
+    app:cardElevation="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <!-- 标题行（title 加粗；无 title 隐藏） -->
+        <TextView
+            android:id="@+id/msg_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- 正文（Markwon 渲染唯一入口——SC3 消毒管道，未经 Markwon 的消息文本不得进 TextView） -->
+        <TextView
+            android:id="@+id/msg_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <!-- seq/时间戳辅助行 -->
+        <TextView
+            android:id="@+id/msg_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textAppearance="?attr/textAppearanceLabelSmall" />
+
+        <!-- answered 展示区（前缀行 + 回复内容经 Markwon 渲染——内容是外部输入同经消毒管道） -->
+        <TextView
+            android:id="@+id/answered_prefix"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/answered_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone" />
+
+        <!-- 快捷选项按钮横排（动态填充；answered 态冻结移除） -->
+        <LinearLayout
+            android:id="@+id/quick_options"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>
