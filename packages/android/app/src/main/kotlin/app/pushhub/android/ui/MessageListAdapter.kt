@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import app.pushhub.android.R
 import app.pushhub.android.protocol.ServerFrame
+import app.pushhub.android.render.CardFriendlyLinkMovement
 import app.pushhub.android.render.MarkwonProvider
 import com.google.android.material.card.MaterialCardView
 import io.noties.markwon.Markwon
@@ -66,11 +67,11 @@ class MessageListAdapter(
             holder.title.visibility = View.GONE
         } else {
             holder.title.visibility = View.VISIBLE
-            markwon.setMarkdown(holder.title, frame.title)
+            renderMarkdown(holder.title, frame.title)
         }
 
         // 正文——消毒管道唯一入口（SC3）
-        markwon.setMarkdown(holder.body, frame.text)
+        renderMarkdown(holder.body, frame.text)
 
         // seq/时间戳辅助行
         holder.meta.text = "#${frame.seq} · ${formatTime(frame.createdAt)}"
@@ -83,7 +84,7 @@ class MessageListAdapter(
                 holder.answeredContent.visibility = View.GONE
             } else {
                 holder.answeredContent.visibility = View.VISIBLE
-                markwon.setMarkdown(holder.answeredContent, frame.answeredContent)
+                renderMarkdown(holder.answeredContent, frame.answeredContent)
             }
             holder.quickOptions.removeAllViews()
             holder.quickOptions.visibility = View.GONE
@@ -110,6 +111,17 @@ class MessageListAdapter(
         holder.card.alpha = if (item.pendingReply) 0.55f else 1f
 
         holder.itemView.setOnClickListener { onMessageClick(frame.wid) }
+    }
+
+    /**
+     * 渲染 + movementMethod 覆写（真机 UAT 实证修复 Bug C）：Markwon 每次渲染
+     * 隐式设 LinkMovementMethod（吞掉正文区全部触摸 → 卡片选中点击永不触发），
+     * 渲染后统一覆写为 [CardFriendlyLinkMovement]——链接白名单点击照常，空白区
+     * 放行冒泡到 itemView 选中。
+     */
+    private fun renderMarkdown(view: TextView, text: String) {
+        markwon.setMarkdown(view, text)
+        view.movementMethod = CardFriendlyLinkMovement
     }
 
     /** 快捷选项横排（未答消息；options 空/全空白不渲染——空态纪律）。 */

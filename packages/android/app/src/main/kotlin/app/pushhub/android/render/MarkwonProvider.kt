@@ -3,7 +3,12 @@ package app.pushhub.android.render
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.text.Spannable
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.view.MotionEvent
 import android.view.View
+import android.widget.TextView
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolver
 import io.noties.markwon.Markwon
@@ -98,5 +103,34 @@ private class SchemeGuardCorePlugin : CorePlugin() {
     override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
         super.configureConfiguration(builder)
         builder.linkResolver(SchemeGuardLinkResolver())
+    }
+}
+
+/**
+ * 卡片选中兼容的链接 MovementMethod（真机 UAT 实证修复 Bug C）。
+ *
+ * CorePlugin 渲染时隐式给 TextView 设 LinkMovementMethod——它对**所有**触摸
+ * 返回 true（不止链接区），正文 TextView 吞掉点击后永不冒泡到卡片 itemView
+ * 的选中监听——表现为「点正文区域无法选中消息进行回复，点标题/边距正常」。
+ *
+ * 本实现仅在触摸命中 ClickableSpan 时交父类处理（链接点击 + SchemeGuard
+ * 白名单照常生效），空白区返回 false 放行冒泡（卡片选中恢复）。
+ * 用法：每次 setMarkdown 后覆写 movementMethod（Markwon 渲染会重设默认值）。
+ */
+object CardFriendlyLinkMovement : LinkMovementMethod() {
+    override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_DOWN -> {
+                val x = (event.x + 0.5f).toInt() - widget.totalPaddingLeft + widget.scrollX
+                val y = (event.y + 0.5f).toInt() - widget.totalPaddingTop + widget.scrollY
+                val layout = widget.layout ?: return false
+                val line = layout.getLineForVertical(y)
+                val off = layout.getOffsetForHorizontal(line, x.toFloat())
+                if (buffer.getSpans(off, off, ClickableSpan::class.java).isEmpty()) {
+                    return false // 非链接区：不消费 → 冒泡卡片选中
+                }
+            }
+        }
+        return super.onTouchEvent(widget, buffer, event)
     }
 }
