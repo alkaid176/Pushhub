@@ -112,28 +112,23 @@ class FramesTracerTest {
     @Test
     fun `unknown frame type drops non fatal`() {
         // A2 实证：未知 discriminator 抛 SerializationException → Drop。
-        // ws-error-frame.json 是 type:"error" 数组——tracer 帧型集尚无 error
-        //（06-03 接入后翻转为 Ok），当前按 D-07 前瞻兼容丢弃。
-        val cases = lenientJson.parseToJsonElement(fixture("ws-error-frame.json"))
-        for (case in cases as JsonArray) {
-            assertEquals(
-                FrameResult.Drop("malformed or unknown frame type"),
-                parseServerFrame(case.toString()),
-            )
-        }
-        // 内联未知 type 同语义。
-        assertEquals(
-            FrameResult.Drop("malformed or unknown frame type"),
-            parseServerFrame("""{"v":1,"type":"answered","wid":"m_x"}"""),
+        // ws-error-frame.json 是 type:"error" 数组——06-03 起已接入 error 帧型
+        //（FixturesContractTest 消费正例）；此处改用真未知 type 验证前瞻兼容。
+        assertTrue(
+            parseServerFrame("""{"v":1,"type":"future-thing","x":1}""") is FrameResult.Drop,
+        )
+        // 内联未知 type 同语义（06-03 起 answered 已接入，换成真未知值）。
+        assertTrue(
+            parseServerFrame("""{"v":1,"type":"answered2","wid":"m_x"}""") is FrameResult.Drop,
         )
     }
 
     @Test
     fun `known type structure violation drops`() {
-        // message 缺必填 text → SerializationException → Drop（非致命，连接保持）。
-        assertEquals(
-            FrameResult.Drop("malformed or unknown frame type"),
-            parseServerFrame("""{"v":1,"type":"message","wid":"m_x","seq":1,"priority":"normal","answered":false,"created_at":1}"""),
+        // message 缺必填 text → 深校验 shape 违例 → Drop（非致命，连接保持）。
+        assertTrue(
+            parseServerFrame("""{"v":1,"type":"message","wid":"m_x","seq":1,"priority":"normal","answered":false,"created_at":1}""")
+                is FrameResult.Drop,
         )
     }
 

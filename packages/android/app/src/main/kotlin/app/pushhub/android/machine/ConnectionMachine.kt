@@ -258,6 +258,23 @@ class ConnectionMachine(
                     }
                 }
                 is ServerFrame.History -> handleHistory(frame, out)
+                is ServerFrame.Answered -> {
+                    // 04-03（connection-machine.ts:219-229）：明确在 SeqDedup 之外——
+                    // answered 是独立帧而非 message 帧（D-17 硬约束：SDK 按 seq 去重
+                    // 会吞同 seq 重发）。同 wid 重复扇出原样透传，幂等消化归宿主。
+                    out += MachineAction.EmitAnswered(frame)
+                }
+                is ServerFrame.Ack -> {
+                    // 04-01 Q4 定稿（connection-machine.ts:226-229）：ack 静默零动作——
+                    // answered 扇出即公共确认，回复者本人由随后的 answered 自证。
+                }
+                is ServerFrame.Error -> {
+                    // 服务端 WS 错误帧（invalid_frame 等，connection-machine.ts:236-239）
+                    // ——非致命透传，连接保持。
+                    out += MachineAction.EmitError(
+                        ErrorPayload(message = frame.message, code = frame.code),
+                    )
+                }
             }
         }
     }
