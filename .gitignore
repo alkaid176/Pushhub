@@ -40,3 +40,6 @@ packages/android/local.properties
 packages/android/.gradle/
 packages/android/build/
 packages/android/app/build/
+
+# spike 运行产物（D-85：发送记录 JSONL——含频道上下文，不入库）
+scripts/.spike-out/
