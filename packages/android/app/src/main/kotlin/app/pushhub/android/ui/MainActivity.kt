@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
+import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
@@ -17,6 +18,7 @@ import app.pushhub.android.config.ChannelConfig
 import app.pushhub.android.config.ConfigStore
 import app.pushhub.android.hub.ChannelHub
 import app.pushhub.android.machine.Status
+import app.pushhub.android.service.NotificationRouter
 import app.pushhub.android.service.PushHubService
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.delay
@@ -68,6 +70,9 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var visibilityWanted = false
 
+    /** 待消费深链定位（通知点击 → 切 tab → Fragment 就绪后 scrollToWid；SC2）。 */
+    private var pendingScroll: DeepLink? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -112,6 +117,80 @@ class MainActivity : AppCompatActivity() {
         startForegroundService(Intent(this, PushHubService::class.java))
 
         observeHub()
+
+        // 深链双路径之一：冷启动由通知点击进入（SC2——06-05 PendingIntent extra）
+        handleDeepLink(intent)
+        // Fragment 晚创建兜底：深链目标页 Fragment onViewCreated 后消费定位
+        supportFragmentManager.registerFragmentLifecycleCallbacks(
+            object : FragmentManager.FragmentLifecycleCallbacks() {
+                override fun onFragmentViewCreated(
+                    fm: FragmentManager,
+                    f: Fragment,
+                    v: View,
+                    savedInstanceState: Bundle?,
+                ) {
+                    val link = pendingScroll ?: return
+                    if (f is MessageFragment &&
+                        f.arguments?.getString(FRAGMENT_ARG_CHANNEL_ID) == link.channelId
+                    ) {
+                        if (f.scrollToWid(link.wid)) pendingScroll = null
+                    }
+                }
+            },
+            false,
+        )
+    }
+
+    /** 深链双路径之二：运行中（singleTask）由通知点击进入——SC2 闭环。 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    // ---- 深链定位链（SC2：通知点击 → 校验 → 切频道 → 定位高亮） ----
+
+    /**
+     * 深链消费：[parseDeepLink] 严格校验（频道白名单 + wid m_ 前缀格式）成功 →
+     * 切 ViewPager2 到目标频道 tab + Fragment 就绪后 [MessageFragment.scrollToWid]
+     * 高亮渐隐（06-06 已实现）；**解析失败 → 仅聚焦主界面**（本 Activity 已被
+     * PendingIntent 带到前台），无崩溃无提示（T-06-07-01 畸形丢弃纪律——
+     * 桌面 parse_launch 同构）。
+     */
+    private fun handleDeepLink(intent: Intent) {
+        val link = parseDeepLink(intent, channels.map { it.id }.toSet()) ?: return
+        val index = channels.indexOfFirst { it.id == link.channelId }
+        if (index < 0) return
+        pendingScroll = link
+        if (viewPager.currentItem != index) {
+            viewPager.setCurrentItem(index, false)
+        }
+        consumePendingScroll()
+    }
+
+    /**
+     * 消费待定位深链：有界轮询目标频道 Fragment 就绪（ViewPager2 页面切换的
+     * Fragment 事务异步执行；offscreen 相邻页可能已就绪即立即命中）。wid 不在
+     * 缓冲窗口（scrollToWid false）时放弃——晚创建场景由 FragmentLifecycleCallbacks
+     * 兜底，均无副作用。
+     */
+    private fun consumePendingScroll() {
+        val link = pendingScroll ?: return
+        lifecycleScope.launch {
+            repeat(DEEPLINK_WAIT_ROUNDS) {
+                val fragment = supportFragmentManager.fragments
+                    .filterIsInstance<MessageFragment>()
+                    .firstOrNull {
+                        it.view != null &&
+                            it.arguments?.getString(FRAGMENT_ARG_CHANNEL_ID) == link.channelId
+                    }
+                if (fragment != null) {
+                    if (fragment.scrollToWid(link.wid)) pendingScroll = null
+                    return@launch
+                }
+                delay(DEEPLINK_WAIT_INTERVAL_MS)
+            }
+        }
     }
 
     // ---- 频道 tab 集（配置 diff 刷新） ----
@@ -290,7 +369,56 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         /** tab 栏末尾固定项文本（D-80——频道管理入口）。 */
         const val ADD_TAB_TEXT = "+"
+
+        /** MessageFragment arguments 的频道 id 键（newInstance 契约——深链定位匹配用）。 */
+        const val FRAGMENT_ARG_CHANNEL_ID = "channelId"
+
+        /** 深链 Fragment 就绪有界轮询（20 × 50ms = 1s 上限——页面切换事务异步）。 */
+        const val DEEPLINK_WAIT_ROUNDS = 20
+
+        const val DEEPLINK_WAIT_INTERVAL_MS = 50L
     }
+}
+
+// ---- 深链解析（SC2——06-05 NotificationRouter.EXTRA_CHANNEL/EXTRA_WID 契约的
+//      消费侧，06-07 Task 3） ----
+
+/** 深链目标（通知点击 → 切频道 tab → 定位高亮消息）。 */
+data class DeepLink(val channelId: String, val wid: String)
+
+/**
+ * wid 前缀（D-05 对齐——packages/shared/src/index.ts WID_PREFIX = "m_" 表消息；
+ * 服务端生成 m_ + 16 字符，客户端校验取前缀 + 非空即可，严格长度校验会在格式
+ * 演进时误拒）。
+ */
+const val WID_PREFIX = "m_"
+
+/**
+ * 深链 extra 解析（Intent 壳——读 extra 委托 [parseDeepLinkArgs] 纯函数；
+ * extra 契约 ph_channel/ph_wid 由 06-05 NotificationRouter.deepLinkExtras 构造）。
+ */
+fun parseDeepLink(intent: Intent, knownChannelIds: Set<String>): DeepLink? =
+    parseDeepLinkArgs(
+        channel = intent.getStringExtra(NotificationRouter.EXTRA_CHANNEL),
+        wid = intent.getStringExtra(NotificationRouter.EXTRA_WID),
+        knownChannelIds = knownChannelIds,
+    )
+
+/**
+ * 深链解析纯函数（桌面 notify/mod.rs parse_launch 124-130 严格解析与畸形丢弃
+ * 纪律的 Android extra 对应物——T-06-07-01 mitigate）：
+ *  - ph_channel **存在于当前配置频道集合**（白名单——伪造/过时频道 id 拒绝）；
+ *  - ph_wid 匹配 m_ 前缀格式（前缀 + 非空）；
+ *  - 任何缺失（null）/未知频道/畸形 wid → null（调用方仅聚焦主界面，无崩溃、
+ *    无异常导航、无 startActivity 副作用——本函数零 Android 调用，纯函数
+ *    结构性保证）。
+ */
+fun parseDeepLinkArgs(channel: String?, wid: String?, knownChannelIds: Set<String>): DeepLink? {
+    if (channel == null || wid == null) return null
+    if (channel !in knownChannelIds) return null
+    if (!wid.startsWith(WID_PREFIX)) return null
+    if (wid.length <= WID_PREFIX.length) return null
+    return DeepLink(channelId = channel, wid = wid)
 }
 
 /**
