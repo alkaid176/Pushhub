@@ -109,8 +109,11 @@ class NotificationRouter(private val context: Context) {
             .setContentTitle(channelName)
             .setContentText(bodyOf(title, text))
             .setAutoCancel(true)
-            // created_at 秒（协议帧）→ 毫秒（Android when 口径）
-            .setWhen(createdAt * 1000)
+            // created_at 为毫秒 epoch（服务端 chat-room.ts createdAt = Date.now()，
+            // golden fixtures 冻结值 1756185600000；MessageListAdapter.formatTime
+            // 同口径直用）——Android when 同单位直用。CR-02 修复：原「秒→毫秒」
+            // 认知错误，* 1000 把 when 错到远未来，通知按 when 排序/展示全错。
+            .setWhen(createdAt)
             .setContentIntent(contentIntent)
             .build()
         // tag=wid + 固定 NOTIF_ID（Pitfall 5：wid 字符串 tag，禁 hash 转 Int）
