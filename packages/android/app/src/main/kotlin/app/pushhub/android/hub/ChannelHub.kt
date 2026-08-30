@@ -34,8 +34,8 @@ sealed class HubEvent {
  * 本文件**零 android. import**（检查函数经构造注入——纯 JVM 可测）；Android
  * 侧真实检查函数由 06-05 PushHubService 装配时注入安装。
  *
- * 06-01 的 PushHubService.statusFlow 临时共享状态与 MainActivity 占位订阅
- * 本 task 不动（跨 plan 文件所有权纪律——06-05/06-06 在 Wave 3 各自替换）。
+ * 06-01 的 PushHubService.statusFlow 临时共享状态已被 06-05 ChannelHub 写入 +
+ * 06-07 manager.statuses() 聚合全面取代（占位订阅随 06-06 移除）。
  */
 class ChannelHub(
     private val runtimePermissionGranted: () -> Boolean,
@@ -80,6 +80,39 @@ class ChannelHub(
 
     private val _unreadCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
 
+    /**
+     * 当前显示频道（06-07，D-81）：MainActivity tab 切换写入——未读豁免
+     * （当前频道实时可见不计）与回复出站口路由（MessageFragment.replyChannelAdapter
+     * 挂当前频道 adapter）的共享真值。null = 无频道显示（初始态）。
+     */
+    val currentChannelId: StateFlow<String?>
+        get() = _currentChannelId.asStateFlow()
+
+    private val _currentChannelId = MutableStateFlow<String?>(null)
+
+    /**
+     * 应用可见性请求（06-07，D-27 探活第三端落位）：MainActivity onResume
+     * → requestVisibility(true) / onStop → requestVisibility(false)；service
+     * collect 转发 ChannelManager.setVisibility 逐频道广播。StateFlow 当前值
+     * 语义保证 service 装配后读到最新请求（UI 先 resume、service 后装配的
+     * 时序下不丢请求——初始 false 与「未见即不可见」语义一致）。
+     */
+    val appVisibility: StateFlow<Boolean>
+        get() = _appVisibility.asStateFlow()
+
+    private val _appVisibility = MutableStateFlow(false)
+
+    /**
+     * 重连倒计时截止时间表（06-07，D-81 状态条「重连中 + 倒计时」数据源）：
+     * channelId → epoch 毫秒截止（service 侧 OkHttpChannelRuntime 经
+     * Schedule(Reconnect) 动作回调写入 = now + delayMs；ChannelWiring.onStatus
+     * 离开 Reconnecting 态时清除——状态与倒计时同源不漂移）。UI 差值渲染剩余秒。
+     */
+    val reconnectDeadlines: StateFlow<Map<String, Long>>
+        get() = _reconnectDeadlines.asStateFlow()
+
+    private val _reconnectDeadlines = MutableStateFlow<Map<String, Long>>(emptyMap())
+
     // ---- Service 写入口（06-05 接线） ----
 
     /** 重算通知阻断状态（Service 在权限变化 onResume 等时机调用）。 */
@@ -112,6 +145,31 @@ class ChannelHub(
     /** 清除频道未读（06-07 消费——切换到该频道时）。 */
     fun clearUnread(channelId: String) {
         _unreadCounts.update { it - channelId }
+    }
+
+    /** 更新当前显示频道（MainActivity tab 切换写入——未读豁免/reply 路由共享真值）。 */
+    fun setCurrentChannel(channelId: String?) {
+        _currentChannelId.value = channelId
+    }
+
+    /** 应用可见性请求（MainActivity onResume/onStop 写入——service 转发探活广播）。 */
+    fun requestVisibility(visible: Boolean) {
+        _appVisibility.value = visible
+    }
+
+    /**
+     * 重连倒计时写入（service 侧 Schedule(Reconnect) 动作回调）：截止 = now + delayMs
+     * （同频道重复武装为覆盖语义——forceReconnect 换新退避即新截止）。
+     */
+    fun setReconnectDeadline(channelId: String, delayMs: Long) {
+        _reconnectDeadlines.update {
+            it + (channelId to (System.currentTimeMillis() + delayMs))
+        }
+    }
+
+    /** 清除频道重连倒计时（离开 Reconnecting 态——ChannelWiring.onStatus 调用）。 */
+    fun clearReconnectDeadline(channelId: String) {
+        _reconnectDeadlines.update { it - channelId }
     }
 
     private fun computeNotificationsBlocked(): Boolean =

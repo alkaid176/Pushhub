@@ -79,6 +79,10 @@ dependencies {
     // lifecycleScope；catalog 备位转消费）
     implementation(libs.androidx.fragment)
 
+    // 06-07 Task 2：多频道 tab 化（D-80——ViewPager2 每频道一 MessageFragment；
+    // catalog 备位转消费）
+    implementation(libs.androidx.viewpager2)
+
     // JVM 测试：机器/协议纯逻辑 + fixtures 契约 + mockwebserver3 真实 WS 模拟
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)

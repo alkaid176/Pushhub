@@ -144,6 +144,13 @@ class OkHttpChannelAdapter(
     /** 主动断开（Disconnect 臂位 06-03 填充；feed 通道保持开放）。 */
     fun disconnect() = feed(MachineEvent.Disconnect)
 
+    /**
+     * 探活广播入口（D-27——06-07 增补）：ChannelManager.setVisibility 逐频道
+     * 转发的生产注入口（此前唯一入口是 internal feedEvent 测试通道——06-07
+     * ChannelRuntime.setVisibility 接线所需的最小增补，Rule 3）。
+     */
+    fun setVisibility(visible: Boolean) = feed(MachineEvent.Visibility(visible))
+
     /** 终局销毁：Destroy 事件 + 串行队列关闭 + scope 取消（定时器一并收敛）。 */
     fun destroy() {
         feed(MachineEvent.Destroy)
@@ -155,6 +162,14 @@ class OkHttpChannelAdapter(
     private fun feed(event: MachineEvent) {
         eventQueue.trySend(event)
     }
+
+    /**
+     * 动作观察钩子（06-07 增补）：消费协程在 apply 后回调（仅消费协程线程调用，
+     * 钩子自身须线程安全）。生产消费面 = OkHttpChannelRuntime 转发
+     * Schedule(Reconnect) 的剩余毫秒（重连倒计时发布——D-81 状态条数据源）；
+     * null = 无观察（缺省零开销）。
+     */
+    internal var onActionHook: ((MachineAction) -> Unit)? = null
 
     /**
      * 事件注入口（JVM 测试专用——internal 同 module 可见）：模拟定时器到期/
@@ -196,6 +211,7 @@ class OkHttpChannelAdapter(
             is MachineAction.EmitAnswered -> events.onAnswered(action.frame)
             is MachineAction.EmitError -> events.onError(action.error)
         }
+        onActionHook?.invoke(action)
     }
 
     private fun openSocket() {
