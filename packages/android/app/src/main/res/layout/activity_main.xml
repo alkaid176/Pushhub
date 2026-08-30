@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- MainActivity 布局（06-06 Task 2 → 06-07 Task 2 tab 化，D-80/D-81/D-83）。
      结构（自上而下）：
-      1. 权限被拒常驻横幅（Material Banner「消息不会提醒 · 点击开启」——点击跳
+      1. 权限被拒常驻横幅（横排 LinearLayout「消息不会提醒 · 点击开启」——点击跳
          ACTION_APP_NOTIFICATION_SETTINGS；绑定 ChannelHub.notificationsBlocked，
          SC2 锁定行为：拒绝不阻断连接，但界面常驻提醒）；
       2. 顶部连接状态条（MaterialCardView 内 TextView——**当前显示频道**状态：
@@ -16,11 +16,15 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- 权限被拒横幅（SC2 锁定：默认隐藏，NotificationsBlocked 为真时显示） -->
-    <com.google.android.material.banner.Banner
+    <!-- 权限被拒横幅（SC2 锁定：默认隐藏，NotificationsBlocked 为真时显示）。
+         注：Material Components 无 Banner 控件（规范有、库未实现——真机装机
+         首启 ClassNotFoundException 修复），用横排 LinearLayout 等价承载。 -->
+    <LinearLayout
         android:id="@+id/notification_banner"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
         android:visibility="gone">
 
         <TextView
@@ -39,7 +43,7 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center_vertical"
             android:text="点击开启" />
-    </com.google.android.material.banner.Banner>
+    </LinearLayout>
 
     <!-- 顶部连接状态条（D-81：当前显示频道状态常驻可见——tab 切换联动） -->
     <com.google.android.material.card.MaterialCardView
