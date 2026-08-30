@@ -155,10 +155,14 @@ class NotificationLogicTest {
         // notify(tag=wid, NOTIF_ID) 与 cancel(tag=wid, NOTIF_ID) 同常量配对（D-69）
         assertTrue("notify 必须使用 nm.notify(wid, NOTIF_ID", src.contains("nm.notify(wid, NOTIF_ID"))
         assertTrue("cancel 必须使用 nm.cancel(wid, NOTIF_ID", src.contains("nm.cancel(wid, NOTIF_ID"))
-        // 禁 hash 转 Int 作通知 id（Pitfall 5）：wid.hashCode() 仅允许出现在
-        // PendingIntent requestCode 一处
+        // 禁 hash 转 Int（Pitfall 5 + WR-02 修复）：wid.hashCode() 全文件零出现
+        // ——requestCode 改单调递增序号（hash 32 位碰撞会串台 PendingIntent extra）
         val hashCodeUses = Regex("wid\\.hashCode\\(\\)").findAll(src).count()
-        assertEquals("wid.hashCode() 仅 PendingIntent requestCode 一处", 1, hashCodeUses)
+        assertEquals("wid.hashCode() 不得出现（requestCode 用单调序号）", 0, hashCodeUses)
+        assertTrue(
+            "requestCode 须来自单调序号（requestCodes.incrementAndGet）",
+            src.contains("requestCodes.incrementAndGet()"),
+        )
     }
 
     @Test

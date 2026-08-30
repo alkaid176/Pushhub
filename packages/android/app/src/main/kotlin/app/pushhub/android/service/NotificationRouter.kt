@@ -10,6 +10,7 @@ import android.content.Intent
 import androidx.core.app.NotificationCompat
 import app.pushhub.android.R
 import app.pushhub.android.ui.MainActivity
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 通知路由层（06-05 Task 1，AND-02/D-87/D-88/D-69/SC2）——桌面 notify/mod.rs 的
@@ -94,11 +95,14 @@ class NotificationRouter(private val context: Context) {
         }
         val contentIntent = PendingIntent.getActivity(
             context,
-            // requestCode 按 wid 区分（不同消息不同 PendingIntent——extra 不串台）
-            wid.hashCode(),
+            // requestCode 单调递增序号（WR-02 修复）：wid 的 32 位 hash 碰撞时
+            // FLAG_UPDATE_CURRENT 按 requestCode 匹配并覆盖既有 PendingIntent——
+            // 后发通知覆盖先发 extra，点通知 A 深链打开消息 B（Pitfall 5 同源
+            // 风险）。序号唯一性由 AtomicLong 保证，不受生日界碰撞影响。
+            requestCodes.incrementAndGet().toInt(),
             intent,
             // IMMUTABLE：targetSdk 31+ 强制（T-06-05-02 mitigate）；UPDATE_CURRENT：
-            // 同 wid 重发时刷新 extra
+            // 保留（requestCode 唯一化后不再命中既有 PI，语义等价新建——零成本兼容）
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(
@@ -137,6 +141,12 @@ class NotificationRouter(private val context: Context) {
     companion object {
         /** 消息通知固定 id（与 tag=wid 配对区分——同一 tag 空间内唯一即可）。 */
         const val NOTIF_ID = 100
+
+        /**
+         * PendingIntent requestCode 单调序号（WR-02 修复——进程内唯一，跨
+         * NotificationRouter 实例连续：service 重建后新 router 不重置计数）。
+         */
+        private val requestCodes = AtomicLong(0)
 
         /** FGS 常驻通知通道 ph_fgs 的常量统一来源在 PushHubService.CHANNEL_ID_FGS（06-01 首占，本文件不重复声明）。 */
 
